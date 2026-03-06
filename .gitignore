@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+.env
+.venv
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated outputs (reproducible from run_prototype.py)
+data/synthetic/
+outputs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
