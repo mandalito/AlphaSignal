@@ -336,7 +336,7 @@ def page_model_performance():
         ).highlight_min(
             subset=["Brier"], color="#c8e6c9"
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -790,7 +790,7 @@ def page_master_signal():
     c1, c2 = st.columns([1, 2])
     with c1:
         action_counts = signals_df["recommended_action"].value_counts()
-        st.dataframe(action_counts.to_frame("Count"), use_container_width=True)
+        st.dataframe(action_counts.to_frame("Count"), width="stretch")
         st.markdown("""
         | Action | Rule |
         |--------|------|
@@ -855,7 +855,7 @@ def page_master_signal():
             "engagement_score": "{:.4f}",
             "master_signal": "{:.4f}",
         }).background_gradient(subset=["master_signal"], cmap="Greens"),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
