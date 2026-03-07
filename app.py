@@ -77,6 +77,21 @@ def load_artifacts():
         return pickle.load(f)
 
 
+def _artifact_mtime():
+    try:
+        return os.path.getmtime(ARTIFACT_PATH)
+    except OSError:
+        return 0
+
+
+# Bust cache when the artifact file changes
+if "artifact_mtime" not in st.session_state:
+    st.session_state.artifact_mtime = _artifact_mtime()
+elif st.session_state.artifact_mtime != _artifact_mtime():
+    st.session_state.artifact_mtime = _artifact_mtime()
+    load_artifacts.clear()
+
+
 # ---------------------------------------------------------------------------
 # Sidebar navigation
 # ---------------------------------------------------------------------------
