@@ -62,7 +62,9 @@ ML models + rules
 |--------|-----------|---------|
 | Redemption Risk (Full) | XGBoost | 0.795 |
 | Redemption Risk (Tx-strict) | RF | 0.786 |
-| Buy Propensity | Best of LR/RF/XGB | Computed at runtime |
+| Buy Propensity (Tx-strict) | RF | 0.779 |
+
+**Master Signal outputs:** 8,130 Upsell / 20,136 Retention / 20,457 Monitor
 
 ---
 
@@ -116,6 +118,11 @@ a Q4 monthly transaction rate **below 20%** of their Jan–Sep rate.
 
 `future_growth = 1` when a customer's Q4 monthly transaction rate reaches
 **at least 1.5×** their Jan–Sep monthly rate.
+
+| Class | Count | Rate |
+|-------|-------|------|
+| No growth (0) | 39,134 | 80.3% |
+| Growth (1) | 9,589 | 19.7% |
 
 Both targets are **behavioural proxies** — not contractual events. In
 production they would be replaced by business-defined labels.
@@ -239,6 +246,12 @@ Uses the Full-setup XGBoost model (best ROC AUC).
 `P(future_growth)` — probability the customer increases activity ≥ 1.5×.
 Trained on Tx-strict features using the same pipeline (LR, RF, XGBoost).
 
+| Model | ROC AUC |
+|-------|--------|
+| RF | 0.779 |
+| XGBoost | 0.777 |
+| LR | 0.756 |
+
 ### Signal 3 — Engagement Score (Rule-Based)
 
 Weighted composite of MinMax-normalised behavioral features:
@@ -281,11 +294,20 @@ Each customer receives a recommended action:
 Clients are ranked by descending MasterSignal. The top 100 form the
 **sales opportunity list**.
 
+| Action | Count | % |
+|--------|-------|---|
+| Upsell | 8,130 | 16.7% |
+| Retention | 20,136 | 41.3% |
+| Monitor | 20,457 | 42.0% |
+
 ---
 
 ## Interactive Dashboard
 
+**Live demo:** [alphasignal.streamlit.app](https://alphasignal.streamlit.app/)
+
 ```bash
+# Or run locally:
 streamlit run app.py
 ```
 
@@ -351,11 +373,14 @@ See [requirements.txt](requirements.txt) for pinned versions.
 
 ## Limitations
 
-1. **No contractual churn event** — the target is a behavioural proxy.
+1. **No contractual churn event** — targets are behavioural proxies.
 2. **Single temporal split** — one observation/prediction window pair;
    no walk-forward validation.
 3. **Customer attributes assumed static** — untimestamped variables may
    incorporate future information. The Tx-strict benchmark mitigates this.
 4. **12-month dataset** — limits generalisability to seasonal patterns.
-5. **Class imbalance** — ~2% disengagement rate makes precision on the
+5. **Class imbalance** — 2.3% disengagement rate makes precision on the
    minority class challenging.
+6. **Signal weights are heuristic** — the Master Signal formula
+   (0.5/0.3/0.2) is not optimised; in production these would be tuned
+   against a downstream KPI.
