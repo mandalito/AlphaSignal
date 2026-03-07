@@ -731,7 +731,7 @@ def page_explainability():
 
 def page_master_signal():
     a = load_artifacts()
-    st.title("Master Commercial Signal")
+    st.title("Expected Commercial Opportunity")
 
     signals_df = a.get("signals_df")
     top_opportunities = a.get("top_opportunities")
@@ -744,13 +744,17 @@ def page_master_signal():
         st.stop()
 
     st.markdown("""
-    > Three behavioral signals combined into a **Master Commercial Signal**
-    > for client prioritisation.
+    > **Commercial Opportunity Framework** — the Master Signal approximates
+    > expected commercial opportunity:
     >
-    > **MasterSignal = 0.5 × BuyPropensity + 0.3 × EngagementScore + 0.2 × (1 − RedemptionRisk)**
+    > **CommercialOpportunity = BuyPropensity × (1 − RedemptionRisk) × EngagementScore**
+    >
+    > This mirrors expected-value scoring in asset management client intelligence:
+    > P(growth) × P(retention) × engagement strength.
     """)
 
     # Key metrics
+    has_ecv = "expected_client_value" in signals_df.columns
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Mean Master Signal",
               f"{signals_df['master_signal'].mean():.3f}")
@@ -758,18 +762,23 @@ def page_master_signal():
               f"{(signals_df['recommended_action'] == 'Upsell').sum():,}")
     c3.metric("Retention Targets",
               f"{(signals_df['recommended_action'] == 'Retention').sum():,}")
-    c4.metric("Monitor",
-              f"{(signals_df['recommended_action'] == 'Monitor').sum():,}")
+    if has_ecv:
+        c4.metric("Median Expected Value",
+                  f"{signals_df['expected_client_value'].median():,.0f}")
+    else:
+        c4.metric("Monitor",
+                  f"{(signals_df['recommended_action'] == 'Monitor').sum():,}")
 
     st.markdown("---")
 
-    # Master Signal distribution
-    st.subheader("Master Signal Distribution")
+    # Master Signal (CommercialOpportunity) distribution
+    st.subheader("Commercial Opportunity Distribution")
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.hist(signals_df["master_signal"], bins=50, color=C["primary"],
             alpha=0.85, edgecolor="white")
-    ax.set_xlabel("Master Signal"); ax.set_ylabel("Count")
-    ax.set_title("Distribution of Master Commercial Signal", fontweight="bold")
+    ax.set_xlabel("Master Signal (Commercial Opportunity)")
+    ax.set_ylabel("Count")
+    ax.set_title("Distribution of Commercial Opportunity Score", fontweight="bold")
     ax.axvline(signals_df["master_signal"].mean(), color="black", ls="--",
                lw=1, label=f"Mean = {signals_df['master_signal'].mean():.3f}")
     ax.legend()
@@ -799,6 +808,32 @@ def page_master_signal():
             plt.close(fig)
 
     st.markdown("---")
+
+    # Expected Value vs Redemption Risk scatter
+    if has_ecv:
+        st.subheader("Expected Value vs Redemption Risk")
+        st.markdown("""
+        Reveals client segments:
+        **High value / low risk** → upsell opportunities ·
+        **High value / high risk** → retention priority ·
+        **Low value / high buy propensity** → emerging opportunity
+        """)
+        fig, ax = plt.subplots(figsize=(10, 7))
+        scatter_ev = ax.scatter(
+            signals_df["redemption_risk"],
+            signals_df["expected_client_value"],
+            c=signals_df["buy_propensity"],
+            cmap="YlOrRd", alpha=0.4, s=8,
+        )
+        plt.colorbar(scatter_ev, ax=ax, label="Buy Propensity")
+        ax.set_xlabel("Redemption Risk")
+        ax.set_ylabel("Expected Client Value")
+        ax.set_title("Expected Value vs Redemption Risk", fontweight="bold")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        st.markdown("---")
 
     # Recommended actions
     st.subheader("Recommended Actions")
@@ -861,15 +896,21 @@ def page_master_signal():
 
     st.markdown("---")
 
-    # Top opportunities
-    st.subheader("Top 100 Sales Opportunities")
+    # Top opportunities by Expected Value
+    st.subheader("Top 100 Opportunities by Expected Value")
+    _fmt = {
+        "buy_propensity": "{:.4f}",
+        "redemption_risk": "{:.4f}",
+        "engagement_score": "{:.4f}",
+        "master_signal": "{:.4f}",
+    }
+    _grad_col = ["master_signal"]
+    if has_ecv and "expected_client_value" in top_opportunities.columns:
+        _fmt["expected_client_value"] = "{:,.0f}"
+        _grad_col = ["expected_client_value"]
     st.dataframe(
-        top_opportunities.style.format({
-            "buy_propensity": "{:.4f}",
-            "redemption_risk": "{:.4f}",
-            "engagement_score": "{:.4f}",
-            "master_signal": "{:.4f}",
-        }).background_gradient(subset=["master_signal"], cmap="Greens"),
+        top_opportunities.style.format(_fmt)
+            .background_gradient(subset=_grad_col, cmap="Greens"),
         width="stretch",
         hide_index=True,
     )
@@ -878,20 +919,26 @@ def page_master_signal():
 
     # Signal correlations
     st.subheader("Signal Correlations")
-    corr_mat = signals_df[["buy_propensity", "redemption_risk",
-                           "engagement_score", "master_signal"]].corr()
-    fig, ax = plt.subplots(figsize=(6, 5))
+    _corr_cols = ["buy_propensity", "redemption_risk",
+                  "engagement_score", "master_signal"]
+    if has_ecv:
+        _corr_cols.append("expected_client_value")
+    corr_mat = signals_df[_corr_cols].corr()
+    fig, ax = plt.subplots(figsize=(7, 6))
     im = ax.imshow(corr_mat, cmap="RdBu_r", vmin=-1, vmax=1)
     labels = ["Buy Prop.", "Redemp. Risk", "Engagement", "Master"]
-    ax.set_xticks(range(4))
-    ax.set_yticks(range(4))
+    if has_ecv:
+        labels.append("Exp. Value")
+    n_labels = len(labels)
+    ax.set_xticks(range(n_labels))
+    ax.set_yticks(range(n_labels))
     ax.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
     ax.set_yticklabels(labels, fontsize=8)
-    for i in range(4):
-        for j in range(4):
+    for i in range(n_labels):
+        for j in range(n_labels):
             ax.text(j, i, f"{corr_mat.iloc[i, j]:.2f}",
                     ha="center", va="center", fontsize=9)
-    plt.colorbar(im, ax=ax, label="Pearson ρ")
+    plt.colorbar(im, ax=ax, label="Pearson \u03c1")
     ax.set_title("Signal Correlation Matrix", fontweight="bold")
     fig.tight_layout()
     st.pyplot(fig)

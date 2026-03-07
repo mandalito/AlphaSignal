@@ -269,15 +269,44 @@ Interpretation: 0 = disengaged, 1 = highly active.
 
 ## Master Commercial Signal
 
-All three signals are normalised to [0, 1] via MinMaxScaler and combined:
+All three signals are normalised to [0, 1] and combined into an expected
+commercial opportunity score:
 
 ```
-MasterSignal = 0.5 × BuyPropensity
-             + 0.3 × EngagementScore
-             + 0.2 × (1 − RedemptionRisk)
+CommercialOpportunity = BuyPropensity × (1 − RedemptionRisk) × EngagementScore
 ```
 
-High MasterSignal = strong sales opportunity.
+The result is normalised to [0, 1] via MinMaxScaler to produce the Master Signal.
+
+### Commercial Interpretation
+
+The Master Signal approximates expected commercial opportunity:
+
+```
+CommercialOpportunity ≈ P(growth) × Engagement × (1 − DisengagementRisk)
+```
+
+This formulation mirrors expected-value scoring frameworks used in client
+intelligence systems in asset management. Rather than predicting a single
+behavioral outcome, the signal integrates:
+
+- **Growth potential** — probability of future activity increase
+- **Client engagement strength** — behavioral health indicator
+- **Downside risk** — probability of disengagement
+
+to produce a unified opportunity score that can guide sales prioritisation.
+
+### Expected Client Value
+
+A monetised prioritisation metric combining opportunity with historical
+activity:
+
+```
+ExpectedClientValue = MasterSignal × tx_total
+```
+
+This highlights clients who combine **high opportunity** with **high
+potential business value**, enabling dollar-weighted sales prioritisation.
 
 ---
 
@@ -291,8 +320,8 @@ Each customer receives a recommended action:
 | **Retention** | RedemptionRisk > 0.6 |
 | **Monitor** | All other clients |
 
-Clients are ranked by descending MasterSignal. The top 100 form the
-**sales opportunity list**.
+Clients are ranked by descending **Expected Client Value**. The top 100
+form the **sales opportunity list**.
 
 | Action | Count | % |
 |--------|-------|---|
@@ -321,7 +350,7 @@ Seven pages:
 | **Setup Comparison** | Full vs Tx-strict vs Cust-only bar charts, ROC overlays, lift |
 | **Threshold Analysis** | Validation sweep, interactive threshold slider, test report |
 | **Explainability** | XGBoost importance, LR coefficients, SHAP analysis |
-| **Master Signal** | Signal distributions, opportunity quadrant, top 100 table, recommended actions, correlation matrix |
+| **Master Signal** | Commercial opportunity distribution, Expected Value vs Risk scatter, opportunity quadrant, top 100 by expected value, recommended actions, correlation matrix |
 
 ---
 
@@ -381,6 +410,7 @@ See [requirements.txt](requirements.txt) for pinned versions.
 4. **12-month dataset** — limits generalisability to seasonal patterns.
 5. **Class imbalance** — 2.3% disengagement rate makes precision on the
    minority class challenging.
-6. **Signal weights are heuristic** — the Master Signal formula
-   (0.5/0.3/0.2) is not optimised; in production these would be tuned
-   against a downstream KPI.
+6. **Multiplicative signal formulation** — the commercial opportunity
+   score uses a multiplicative decomposition (P(growth) × P(retention) ×
+   engagement); in production the functional form and any weights would
+   be validated against downstream conversion or revenue KPIs.

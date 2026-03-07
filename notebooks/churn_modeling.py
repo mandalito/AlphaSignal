@@ -1042,12 +1042,19 @@ print(f"  Engagement Score — min {engagement_all.min():.4f}  "
       f"max {engagement_all.max():.4f}  mean {engagement_all.mean():.4f}")
 
 # %% [markdown]
-# ### 14c. Normalise Signals & Master Commercial Signal
+# ### 14c. Normalise Signals & Expected Commercial Opportunity
+#
+# Two formulations are computed and compared:
 #
 # ```
-# MasterSignal = 0.5 × BuyPropensity + 0.3 × EngagementScore
-#              + 0.2 × (1 − RedemptionRisk)
+# Additive:       CO = BuyPropensity × Engagement − RedemptionRisk
+# Multiplicative:  CO = BuyPropensity × (1 − RedemptionRisk) × Engagement
 # ```
+#
+# The **multiplicative** form is the primary Master Signal because it
+# represents P(growth) × P(retention) × engagement strength — an
+# expected-value decomposition analogous to client-intelligence scoring
+# in asset management.
 
 # %%
 from sklearn.preprocessing import minmax_scale as _mms
@@ -1056,13 +1063,30 @@ bp_norm = _mms(buy_propensity_all)
 rr_norm = _mms(redemption_risk_all)
 eng_norm = _mms(engagement_all)
 
-master_signal = 0.5 * bp_norm + 0.3 * eng_norm + 0.2 * (1 - rr_norm)
+# Additive formulation (for comparison)
+co_additive_raw = bp_norm * eng_norm - rr_norm
+co_additive = _mms(co_additive_raw)  # normalise to [0, 1]
 
-print(f"  Master Signal — min {master_signal.min():.4f}  "
+# Multiplicative formulation (primary)
+co_multiplicative_raw = bp_norm * (1 - rr_norm) * eng_norm
+master_signal = _mms(co_multiplicative_raw)  # normalise to [0, 1]
+
+print(f"  CO additive      — min {co_additive.min():.4f}  "
+      f"max {co_additive.max():.4f}  mean {co_additive.mean():.4f}")
+print(f"  CO multiplicative — min {master_signal.min():.4f}  "
       f"max {master_signal.max():.4f}  mean {master_signal.mean():.4f}")
+print(f"  Correlation (add. vs mult.): "
+      f"{np.corrcoef(co_additive, master_signal)[0,1]:.4f}")
 
 # %% [markdown]
-# ### 14d. Client Prioritisation & Sales Opportunity Ranking
+# ### 14d. Expected Client Value & Sales Opportunity Ranking
+#
+# ```
+# ExpectedClientValue = MasterSignal × tx_total
+# ```
+#
+# This combines opportunity probability with historical activity to
+# produce a monetised prioritisation metric.
 
 # %%
 signals_df = pd.DataFrame({
@@ -1071,7 +1095,13 @@ signals_df = pd.DataFrame({
     "redemption_risk": rr_norm,
     "engagement_score": eng_norm,
     "master_signal": master_signal,
+    "co_additive": co_additive,
 })
+
+# Expected Client Value — opportunity × historical activity
+_tx_total = full_df["tx_total"].fillna(0).values if "tx_total" in full_df.columns \
+    else tx_feats["tx_total"].fillna(0).values
+signals_df["expected_client_value"] = signals_df["master_signal"] * _tx_total
 
 conditions = [
     (signals_df["buy_propensity"] > 0.6) & (signals_df["redemption_risk"] < 0.3),
@@ -1080,18 +1110,23 @@ conditions = [
 signals_df["recommended_action"] = np.select(
     conditions, ["Upsell", "Retention"], default="Monitor")
 
+# Top opportunities ranked by Expected Client Value
 top_opportunities = signals_df.sort_values(
-    "master_signal", ascending=False).head(100).reset_index(drop=True)
+    "expected_client_value", ascending=False).head(100).reset_index(drop=True)
 
 print("\n  Action distribution:")
 print(signals_df["recommended_action"].value_counts().to_frame("n"))
-print(f"\n  Top 5 opportunities:")
+print(f"\n  Expected Client Value — mean {signals_df['expected_client_value'].mean():.2f}  "
+      f"median {signals_df['expected_client_value'].median():.2f}  "
+      f"max {signals_df['expected_client_value'].max():.2f}")
+print(f"\n  Top 5 opportunities by Expected Value:")
 print(top_opportunities.head(5).to_string(index=False, float_format="{:.4f}".format))
 
 # %% [markdown]
-# ### 14e. Opportunity Quadrant
+# ### 14e. Opportunity Visualisations
 
 # %%
+# ── Opportunity Quadrant (original) ──
 fig, ax = plt.subplots(figsize=(10, 7))
 sc = ax.scatter(
     signals_df["buy_propensity"], signals_df["redemption_risk"],
@@ -1110,6 +1145,20 @@ ax.set_title("Client Opportunity Map", fontweight="bold")
 fig.tight_layout(); plt.show()
 
 # %%
+# ── Expected Value vs Redemption Risk ──
+fig, ax = plt.subplots(figsize=(10, 7))
+sc2 = ax.scatter(
+    signals_df["redemption_risk"],
+    signals_df["expected_client_value"],
+    c=signals_df["buy_propensity"], cmap="YlOrRd", alpha=0.4, s=6,
+)
+plt.colorbar(sc2, ax=ax, label="Buy Propensity")
+ax.set_xlabel("Redemption Risk")
+ax.set_ylabel("Expected Client Value")
+ax.set_title("Expected Value vs Redemption Risk", fontweight="bold")
+fig.tight_layout(); plt.show()
+
+# %%
 print("=" * 60)
 print("  Pipeline complete — Multi-Signal Sales Intelligence")
 print("=" * 60)
@@ -1125,6 +1174,7 @@ print(f"\n  Redemption Risk — Best: {best_row['Setup']}/{best_row['Model']} "
 print(f"  Buy Propensity  — Best: {bp_best_algo} ROC {bp_best_roc:.4f}")
 print(f"  Engagement Score — mean {engagement_all.mean():.4f}")
 print(f"  Master Signal    — mean {master_signal.mean():.4f}")
+print(f"  Expected Value   — mean {signals_df['expected_client_value'].mean():.2f}")
 print(f"\n  Actions: {dict(signals_df['recommended_action'].value_counts())}")
 
 # %%
