@@ -14,8 +14,8 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# Generated outputs (reproducible from run_prototype.py)
-data/synthetic/
+# Data (too large for GitHub, keep local only)
+data/
 outputs/
 
 # IDE
