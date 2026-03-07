@@ -1,8 +1,9 @@
-# Future Disengagement Prediction — COFINFAD
+# Multi-Signal Sales Intelligence — COFINFAD
 
-Predicting which customers of a Colombian fintech will show **transactional
-disengagement** (silence or sharp decline) in Q4 2023, using only data
-observable through September 2023.
+A **three-signal behavioral intelligence system** predicting customer
+disengagement risk, growth propensity, and engagement health for a
+Colombian fintech — built from transaction data observable through
+September 2023.
 
 ---
 
@@ -11,41 +12,57 @@ observable through September 2023.
 1. [Overview](#overview)
 2. [Dataset](#dataset)
 3. [Temporal Design](#temporal-design)
-4. [Target Definition](#target-definition)
+4. [Target Definitions](#target-definitions)
 5. [Feature Engineering](#feature-engineering)
 6. [Three Feature Setups](#three-feature-setups)
 7. [Modeling](#modeling)
 8. [Leakage Controls](#leakage-controls)
 9. [Evaluation Protocol](#evaluation-protocol)
-10. [Results](#results)
-11. [Interactive Dashboard](#interactive-dashboard)
-12. [Project Structure](#project-structure)
-13. [How to Run](#how-to-run)
-14. [Requirements](#requirements)
-15. [Limitations](#limitations)
+10. [Results — Redemption Risk](#results--redemption-risk)
+11. [Multi-Signal Architecture](#multi-signal-architecture)
+12. [Master Commercial Signal](#master-commercial-signal)
+13. [Client Prioritisation](#client-prioritisation)
+14. [Interactive Dashboard](#interactive-dashboard)
+15. [Project Structure](#project-structure)
+16. [How to Run](#how-to-run)
+17. [Requirements](#requirements)
+18. [Limitations](#limitations)
 
 ---
 
 ## Overview
 
-No contractual churn label exists in the COFINFAD dataset. The
+The project implements a **multi-signal sales intelligence system** built
+on the COFINFAD dataset. No contractual churn label exists — the
 pre-computed `churn_probability` column is a continuous score (0.1–0.5),
-not a ground-truth event — using it as a feature or target would create
-circularity. We therefore frame the task as **future transactional
-disengagement prediction**: can we identify, from Jan–Sep behaviour,
-which customers will become silent or sharply decline in Oct–Dec?
+not a ground-truth event. We therefore construct three behavioral signals
+from transaction data:
+
+```
+transactions data
+       ↓
+feature engineering (Jan–Sep 2023)
+       ↓
+ML models + rules
+       ↓
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ Redemption Risk  │  │ Buy Propensity  │  │ Engagement Score│
+│ P(disengagement) │  │ P(growth)       │  │ behavioral health│
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         └──────────┬─────────┘──────────┬─────────┘
+                    ↓                    ↓
+           Master Commercial Signal
+                    ↓
+        Sales Opportunity Ranking
+```
 
 **Key results (test set):**
 
-| Setup | Best Model | ROC AUC | PR AUC | Lift@10% |
-|-------|-----------|---------|--------|----------|
-| Full | XGBoost | 0.795 | 0.059 | 2.59× |
-| Tx-strict | RF | 0.786 | 0.067 | 2.46× |
-| Cust-only | XGBoost | 0.495 | 0.024 | 0.92× |
-
-The **Tx-strict** setup — using only transaction-derived features — retains
-nearly all predictive signal, confirming that temporal transaction patterns
-drive the prediction, not customer-level attributes.
+| Signal | Best Model | ROC AUC |
+|--------|-----------|---------|
+| Redemption Risk (Full) | XGBoost | 0.795 |
+| Redemption Risk (Tx-strict) | RF | 0.786 |
+| Buy Propensity | Best of LR/RF/XGB | Computed at runtime |
 
 ---
 
@@ -83,19 +100,25 @@ Place the CSV files in `data/COFINFAD Colombian Fintech Financial Analytics Dat/
 
 ---
 
-## Target Definition
+## Target Definitions
+
+### Redemption Risk — `future_disengaged`
 
 `future_disengaged = 1` when a customer has **zero Q4 transactions** or
 a Q4 monthly transaction rate **below 20%** of their Jan–Sep rate.
-
-This is a **behavioural proxy** for disengagement, not contractual churn.
-In production it would be replaced by actual churn events (account closures,
-cancellations) or business-defined inactivity rules.
 
 | Class | Count | Rate |
 |-------|-------|------|
 | Active (0) | 47,581 | 97.7% |
 | Disengaged (1) | 1,142 | 2.3% |
+
+### Buy Propensity — `future_growth`
+
+`future_growth = 1` when a customer's Q4 monthly transaction rate reaches
+**at least 1.5×** their Jan–Sep monthly rate.
+
+Both targets are **behavioural proxies** — not contractual events. In
+production they would be replaced by business-defined labels.
 
 ---
 
@@ -172,7 +195,7 @@ precision@10%, recall@10%, lift at top decile, calibration curves.
 
 ---
 
-## Results
+## Results — Redemption Risk
 
 ### All Models (Test Set)
 
@@ -201,13 +224,72 @@ precision@10%, recall@10%, lift at top decile, calibration curves.
 
 ---
 
+## Multi-Signal Architecture
+
+Three behavioral signals are derived from the same observation-window
+features:
+
+### Signal 1 — Redemption Risk (ML)
+
+`P(future_disengaged)` — probability the customer becomes inactive.
+Uses the Full-setup XGBoost model (best ROC AUC).
+
+### Signal 2 — Buy Propensity (ML)
+
+`P(future_growth)` — probability the customer increases activity ≥ 1.5×.
+Trained on Tx-strict features using the same pipeline (LR, RF, XGBoost).
+
+### Signal 3 — Engagement Score (Rule-Based)
+
+Weighted composite of MinMax-normalised behavioral features:
+
+```
+engagement = 0.35 × tx_freq_norm
+           + 0.25 × tx_count_trend_norm
+           + 0.20 × (1 − tx_recency_norm)
+           + 0.20 × (1 − tx_max_gap_norm)
+```
+
+Interpretation: 0 = disengaged, 1 = highly active.
+
+---
+
+## Master Commercial Signal
+
+All three signals are normalised to [0, 1] via MinMaxScaler and combined:
+
+```
+MasterSignal = 0.5 × BuyPropensity
+             + 0.3 × EngagementScore
+             + 0.2 × (1 − RedemptionRisk)
+```
+
+High MasterSignal = strong sales opportunity.
+
+---
+
+## Client Prioritisation
+
+Each customer receives a recommended action:
+
+| Action | Rule |
+|--------|------|
+| **Upsell** | BuyPropensity > 0.6 AND RedemptionRisk < 0.3 |
+| **Retention** | RedemptionRisk > 0.6 |
+| **Monitor** | All other clients |
+
+Clients are ranked by descending MasterSignal. The top 100 form the
+**sales opportunity list**.
+
+---
+
 ## Interactive Dashboard
 
 ```bash
 streamlit run app.py
 ```
 
-Six pages:
+Seven pages:
 
 | Page | Content |
 |------|---------|
@@ -217,6 +299,7 @@ Six pages:
 | **Setup Comparison** | Full vs Tx-strict vs Cust-only bar charts, ROC overlays, lift |
 | **Threshold Analysis** | Validation sweep, interactive threshold slider, test report |
 | **Explainability** | XGBoost importance, LR coefficients, SHAP analysis |
+| **Master Signal** | Signal distributions, opportunity quadrant, top 100 table, recommended actions, correlation matrix |
 
 ---
 

@@ -96,6 +96,7 @@ page = st.sidebar.radio(
         "⚖️ Setup Comparison",
         "🎚️ Threshold Analysis",
         "🧠 Explainability",
+        "📡 Master Signal",
     ],
 )
 
@@ -710,6 +711,179 @@ def page_explainability():
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  PAGE 7: MASTER SIGNAL                                                ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def page_master_signal():
+    a = load_artifacts()
+    st.title("Master Commercial Signal")
+
+    signals_df = a.get("signals_df")
+    top_opportunities = a.get("top_opportunities")
+
+    if signals_df is None:
+        st.error(
+            "Multi-signal data not found. Re-run the pipeline to generate signals:\n\n"
+            "```\npython3 notebooks/churn_modeling.py\n```"
+        )
+        st.stop()
+
+    st.markdown("""
+    > Three behavioral signals combined into a **Master Commercial Signal**
+    > for client prioritisation.
+    >
+    > **MasterSignal = 0.5 × BuyPropensity + 0.3 × EngagementScore + 0.2 × (1 − RedemptionRisk)**
+    """)
+
+    # Key metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Mean Master Signal",
+              f"{signals_df['master_signal'].mean():.3f}")
+    c2.metric("Upsell Candidates",
+              f"{(signals_df['recommended_action'] == 'Upsell').sum():,}")
+    c3.metric("Retention Targets",
+              f"{(signals_df['recommended_action'] == 'Retention').sum():,}")
+    c4.metric("Monitor",
+              f"{(signals_df['recommended_action'] == 'Monitor').sum():,}")
+
+    st.markdown("---")
+
+    # Master Signal distribution
+    st.subheader("Master Signal Distribution")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.hist(signals_df["master_signal"], bins=50, color=C["primary"],
+            alpha=0.85, edgecolor="white")
+    ax.set_xlabel("Master Signal"); ax.set_ylabel("Count")
+    ax.set_title("Distribution of Master Commercial Signal", fontweight="bold")
+    ax.axvline(signals_df["master_signal"].mean(), color="black", ls="--",
+               lw=1, label=f"Mean = {signals_df['master_signal'].mean():.3f}")
+    ax.legend()
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Individual signal distributions
+    st.subheader("Individual Signal Distributions")
+    cols = st.columns(3)
+    sig_info = [
+        ("buy_propensity", "Buy Propensity", "#1976D2"),
+        ("engagement_score", "Engagement Score", "#388E3C"),
+        ("redemption_risk", "Redemption Risk", "#D32F2F"),
+    ]
+    for col, (feat, label, color) in zip(cols, sig_info):
+        with col:
+            fig, ax = plt.subplots(figsize=(5, 3))
+            ax.hist(signals_df[feat], bins=40, color=color, alpha=0.85,
+                    edgecolor="white")
+            ax.set_title(label, fontweight="bold", fontsize=10)
+            ax.set_ylabel("Count")
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+    st.markdown("---")
+
+    # Recommended actions
+    st.subheader("Recommended Actions")
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        action_counts = signals_df["recommended_action"].value_counts()
+        st.dataframe(action_counts.to_frame("Count"), use_container_width=True)
+        st.markdown("""
+        | Action | Rule |
+        |--------|------|
+        | **Upsell** | BuyPropensity > 0.6 AND RedemptionRisk < 0.3 |
+        | **Retention** | RedemptionRisk > 0.6 |
+        | **Monitor** | All other clients |
+        """)
+    with c2:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        colors_act = {"Upsell": "#388E3C", "Retention": "#D32F2F",
+                      "Monitor": "#FFA000"}
+        bars = ax.bar(
+            action_counts.index, action_counts.values,
+            color=[colors_act.get(a, "#999") for a in action_counts.index],
+            alpha=0.85,
+        )
+        for bar in bars:
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 50,
+                    f"{bar.get_height():,}", ha="center", va="bottom",
+                    fontsize=9)
+        ax.set_ylabel("Count")
+        ax.set_title("Action Distribution", fontweight="bold")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    st.markdown("---")
+
+    # Opportunity quadrant
+    st.subheader("Opportunity Quadrant")
+    fig, ax = plt.subplots(figsize=(10, 7))
+    scatter = ax.scatter(
+        signals_df["buy_propensity"],
+        signals_df["redemption_risk"],
+        c=signals_df["engagement_score"],
+        cmap="RdYlGn", alpha=0.4, s=8,
+    )
+    plt.colorbar(scatter, ax=ax, label="Engagement Score")
+    ax.set_xlabel("Buy Propensity")
+    ax.set_ylabel("Redemption Risk")
+    ax.set_title("Client Opportunity Map", fontweight="bold")
+    ax.axhline(0.3, color="#9e9e9e", ls="--", lw=0.7)
+    ax.axhline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+    ax.axvline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+    ax.text(0.8, 0.15, "UPSELL", fontsize=11, fontweight="bold",
+            color="#388E3C", ha="center", alpha=0.7)
+    ax.text(0.3, 0.8, "RETENTION", fontsize=11, fontweight="bold",
+            color="#D32F2F", ha="center", alpha=0.7)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Top opportunities
+    st.subheader("Top 100 Sales Opportunities")
+    st.dataframe(
+        top_opportunities.style.format({
+            "buy_propensity": "{:.4f}",
+            "redemption_risk": "{:.4f}",
+            "engagement_score": "{:.4f}",
+            "master_signal": "{:.4f}",
+        }).background_gradient(subset=["master_signal"], cmap="Greens"),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.markdown("---")
+
+    # Signal correlations
+    st.subheader("Signal Correlations")
+    corr_mat = signals_df[["buy_propensity", "redemption_risk",
+                           "engagement_score", "master_signal"]].corr()
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(corr_mat, cmap="RdBu_r", vmin=-1, vmax=1)
+    labels = ["Buy Prop.", "Redemp. Risk", "Engagement", "Master"]
+    ax.set_xticks(range(4))
+    ax.set_yticks(range(4))
+    ax.set_xticklabels(labels, fontsize=8, rotation=30, ha="right")
+    ax.set_yticklabels(labels, fontsize=8)
+    for i in range(4):
+        for j in range(4):
+            ax.text(j, i, f"{corr_mat.iloc[i, j]:.2f}",
+                    ha="center", va="center", fontsize=9)
+    plt.colorbar(im, ax=ax, label="Pearson ρ")
+    ax.set_title("Signal Correlation Matrix", fontweight="bold")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  ROUTER                                                               ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
@@ -720,6 +894,7 @@ PAGES = {
     "⚖️ Setup Comparison": page_setup_comparison,
     "🎚️ Threshold Analysis": page_threshold,
     "🧠 Explainability": page_explainability,
+    "📡 Master Signal": page_master_signal,
 }
 
 PAGES[page]()

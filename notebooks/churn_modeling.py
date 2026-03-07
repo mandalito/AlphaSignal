@@ -928,25 +928,204 @@ else:
 # 5. **Class imbalance** — ~2 % disengagement rate makes precision on the
 #    minority class challenging; PR AUC is the more informative metric.
 
+# %% [markdown]
+# ---
+# ## 14. Multi-Signal Sales Intelligence System
+#
+# Extending the single disengagement signal into a **three-signal
+# architecture** combined into a **Master Commercial Signal** for client
+# prioritisation.
+#
+# | Signal | Type | Description |
+# |--------|------|-------------|
+# | Redemption Risk | ML (existing) | P(future disengagement) |
+# | Buy Propensity | ML (new) | P(future activity growth) |
+# | Engagement Score | Rule-based | Behavioral health indicator |
+
+# %% [markdown]
+# ### 14a. Buy Propensity — Future Growth Target
+#
+# `future_growth = 1` when a customer's Q4 monthly transaction rate
+# reaches at least 1.5× their Jan–Sep monthly rate.
+
+# %%
+target_df["future_growth"] = (
+    target_df["fut_monthly"] >= 1.5 * target_df["obs_monthly"]
+).astype(int)
+# Zero-activity customers gaining any future transactions → growth
+target_df.loc[
+    (target_df["obs_monthly"] == 0) & (target_df["fut_count"] > 0),
+    "future_growth"] = 1
+
+y_growth = target_df["future_growth"].values
+print("Buy Propensity target (future_growth):")
+_gdist = pd.Series(y_growth).value_counts().to_frame("n")
+_gdist["pct"] = (_gdist["n"] / _gdist["n"].sum() * 100).round(1)
+print(_gdist)
+
+# %%
+# ── Train Buy Propensity models (Tx-strict features) ──
+y_growth_tr = y_growth[idx_train]
+y_growth_va = y_growth[idx_val]
+y_growth_te = y_growth[idx_test]
+
+Xtr_bp, Xva_bp, Xte_bp = d_tx[0], d_tx[1], d_tx[2]
+
+bp_trained = {}
+bp_preds_test = {}
+bp_preds_val = {}
+
+for algo, mdl in make_models(y_growth_tr).items():
+    if algo == "XGB" and HAS_XGB:
+        mdl.fit(Xtr_bp, y_growth_tr,
+                eval_set=[(Xva_bp, y_growth_va)], verbose=False)
+    else:
+        mdl.fit(Xtr_bp, y_growth_tr)
+    bp_preds_val[algo] = mdl.predict_proba(Xva_bp)[:, 1]
+    bp_preds_test[algo] = mdl.predict_proba(Xte_bp)[:, 1]
+    bp_trained[algo] = mdl
+    roc = roc_auc_score(y_growth_te, bp_preds_test[algo])
+    print(f"  Buy Propensity | {algo:3s} | ROC {roc:.4f}")
+
+bp_best_algo = max(bp_preds_test,
+                   key=lambda a: roc_auc_score(y_growth_te, bp_preds_test[a]))
+bp_best_roc = roc_auc_score(y_growth_te, bp_preds_test[bp_best_algo])
+print(f"\n  Best Buy Propensity: {bp_best_algo} (ROC {bp_best_roc:.4f})")
+
+# %%
+# ── Generate all-customer scores ──
+# Redemption Risk (Full setup, best algo → all customers)
+X_full_all = pre_full.transform(full_df[FULL_FEAT])
+redemption_risk_all = trained[("Full", best_algo)].predict_proba(X_full_all)[:, 1]
+
+# Buy Propensity (Tx-strict, best BP algo → all customers)
+X_tx_all = pre_tx.transform(tx_df[TX_FEAT])
+buy_propensity_all = bp_trained[bp_best_algo].predict_proba(X_tx_all)[:, 1]
+
+print(f"  Redemption Risk — min {redemption_risk_all.min():.4f}  "
+      f"max {redemption_risk_all.max():.4f}  mean {redemption_risk_all.mean():.4f}")
+print(f"  Buy Propensity  — min {buy_propensity_all.min():.4f}  "
+      f"max {buy_propensity_all.max():.4f}  mean {buy_propensity_all.mean():.4f}")
+
+# %% [markdown]
+# ### 14b. Engagement Score (Rule-Based)
+#
+# Weighted composite of MinMax-normalised behavioral features:
+#
+# ```
+# engagement = 0.35 × tx_freq_norm
+#            + 0.25 × tx_count_trend_norm
+#            + 0.20 × (1 − tx_recency_norm)
+#            + 0.20 × (1 − tx_max_gap_norm)
+# ```
+
+# %%
+from sklearn.preprocessing import MinMaxScaler as _MMS
+
+_eng_cols = ["tx_freq", "tx_recency", "tx_max_gap", "tx_count_trend", "tx_late_ratio"]
+_eng_raw = full_df[_eng_cols].copy().fillna(0)
+_eng_scaler = _MMS()
+_eng_norm = pd.DataFrame(
+    _eng_scaler.fit_transform(_eng_raw),
+    columns=[c + "_norm" for c in _eng_cols],
+    index=_eng_raw.index,
+)
+
+engagement_all = (
+    0.35 * _eng_norm["tx_freq_norm"]
+    + 0.25 * _eng_norm["tx_count_trend_norm"]
+    + 0.20 * (1 - _eng_norm["tx_recency_norm"])
+    + 0.20 * (1 - _eng_norm["tx_max_gap_norm"])
+).clip(0, 1).values
+
+print(f"  Engagement Score — min {engagement_all.min():.4f}  "
+      f"max {engagement_all.max():.4f}  mean {engagement_all.mean():.4f}")
+
+# %% [markdown]
+# ### 14c. Normalise Signals & Master Commercial Signal
+#
+# ```
+# MasterSignal = 0.5 × BuyPropensity + 0.3 × EngagementScore
+#              + 0.2 × (1 − RedemptionRisk)
+# ```
+
+# %%
+from sklearn.preprocessing import minmax_scale as _mms
+
+bp_norm = _mms(buy_propensity_all)
+rr_norm = _mms(redemption_risk_all)
+eng_norm = _mms(engagement_all)
+
+master_signal = 0.5 * bp_norm + 0.3 * eng_norm + 0.2 * (1 - rr_norm)
+
+print(f"  Master Signal — min {master_signal.min():.4f}  "
+      f"max {master_signal.max():.4f}  mean {master_signal.mean():.4f}")
+
+# %% [markdown]
+# ### 14d. Client Prioritisation & Sales Opportunity Ranking
+
+# %%
+signals_df = pd.DataFrame({
+    "customer_id": full_df["customer_id"].values,
+    "buy_propensity": bp_norm,
+    "redemption_risk": rr_norm,
+    "engagement_score": eng_norm,
+    "master_signal": master_signal,
+})
+
+conditions = [
+    (signals_df["buy_propensity"] > 0.6) & (signals_df["redemption_risk"] < 0.3),
+    signals_df["redemption_risk"] > 0.6,
+]
+signals_df["recommended_action"] = np.select(
+    conditions, ["Upsell", "Retention"], default="Monitor")
+
+top_opportunities = signals_df.sort_values(
+    "master_signal", ascending=False).head(100).reset_index(drop=True)
+
+print("\n  Action distribution:")
+print(signals_df["recommended_action"].value_counts().to_frame("n"))
+print(f"\n  Top 5 opportunities:")
+print(top_opportunities.head(5).to_string(index=False, float_format="{:.4f}".format))
+
+# %% [markdown]
+# ### 14e. Opportunity Quadrant
+
+# %%
+fig, ax = plt.subplots(figsize=(10, 7))
+sc = ax.scatter(
+    signals_df["buy_propensity"], signals_df["redemption_risk"],
+    c=signals_df["engagement_score"], cmap="RdYlGn", alpha=0.4, s=6,
+)
+plt.colorbar(sc, ax=ax, label="Engagement Score")
+ax.axhline(0.3, color="#9e9e9e", ls="--", lw=0.7)
+ax.axhline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+ax.axvline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+ax.text(0.8, 0.15, "UPSELL", fontsize=11, fontweight="bold",
+        color="#388E3C", ha="center", alpha=0.7)
+ax.text(0.3, 0.8, "RETENTION", fontsize=11, fontweight="bold",
+        color="#D32F2F", ha="center", alpha=0.7)
+ax.set_xlabel("Buy Propensity"); ax.set_ylabel("Redemption Risk")
+ax.set_title("Client Opportunity Map", fontweight="bold")
+fig.tight_layout(); plt.show()
+
 # %%
 print("=" * 60)
-print("  Pipeline complete — Future Disengagement Prediction")
+print("  Pipeline complete — Multi-Signal Sales Intelligence")
 print("=" * 60)
 print(f"\n  Obs. window:         Jan – Sep 2023")
 print(f"  Pred. window:        Oct – Dec 2023")
 print(f"  Customers:           {len(y_all):,}")
 print(f"  Disengaged (target): {int(y_all.sum()):,} ({y_all.mean():.1%})")
+print(f"  Growth (target):     {int(y_growth.sum()):,} ({y_growth.mean():.1%})")
 print(f"  Train / Val / Test:  {len(idx_train):,} / {len(idx_val):,} / {len(idx_test):,}")
-print(f"  Full features:       {len(d_full[6])}")
-print(f"  Tx-strict features:  {len(d_tx[6])}")
-print(f"  Cust-only features:  {len(d_cu[6])}")
 best_row = eval_df.loc[eval_df["ROC_AUC"].idxmax()]
-print(f"\n  Best ROC AUC: {best_row['Setup']} / {best_row['Model']} — {best_row['ROC_AUC']:.4f}")
-print(f"  Best threshold (F1 on val): {best_t:.2f} → val F1 = {best_f1_val:.4f}")
-print(f"  churn_probability sanity check: ρ = {corr:.3f}")
-print(f"\n  Preprocessing:  ColumnTransformer fit on train only ✓")
-print(f"  Threshold:      tuned on validation only ✓")
-print(f"  Test set:       used for final evaluation only ✓")
+print(f"\n  Redemption Risk — Best: {best_row['Setup']}/{best_row['Model']} "
+      f"ROC {best_row['ROC_AUC']:.4f}")
+print(f"  Buy Propensity  — Best: {bp_best_algo} ROC {bp_best_roc:.4f}")
+print(f"  Engagement Score — mean {engagement_all.mean():.4f}")
+print(f"  Master Signal    — mean {master_signal.mean():.4f}")
+print(f"\n  Actions: {dict(signals_df['recommended_action'].value_counts())}")
 
 # %%
 # ── Save artifacts for dashboard ──
@@ -959,13 +1138,14 @@ _artifacts = {
     "best_algo": best_algo,
     "best_t": best_t,
     "best_f1_val": best_f1_val,
-    # Predictions
+    # Predictions (disengagement)
     "preds_test": preds_test,
     "preds_val": preds_val,
     # Labels
     "y_all": y_all,
     "y_te": y_all[idx_test],
     "y_va": y_all[idx_val],
+    "y_growth": y_growth,
     # Indices
     "idx_train": idx_train,
     "idx_val": idx_val,
@@ -973,6 +1153,8 @@ _artifacts = {
     # Models & preprocessors
     "trained": trained,
     "pre_full": pre_full,
+    "bp_trained": bp_trained,
+    "bp_best_algo": bp_best_algo,
     # Feature names
     "feat_names_full": d_full[6],
     "feat_names_tx": d_tx[6],
@@ -990,6 +1172,11 @@ _artifacts = {
     # SHAP (if computed)
     "shap_vals": shap_vals if HAS_SHAP else None,
     "shap_sample_idx": sample_idx if HAS_SHAP else None,
+    # Multi-signal system
+    "signals_df": signals_df,
+    "top_opportunities": top_opportunities,
+    "bp_preds_test": bp_preds_test,
+    "bp_preds_val": bp_preds_val,
 }
 
 _out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "outputs")
