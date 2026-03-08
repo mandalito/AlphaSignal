@@ -3,7 +3,7 @@ app.py — AlphaSignal: Client Intelligence System
 =================================================
 Interactive strategic report for Pictet Asset Management.
 Structured as an 11-section narrative — from problem definition
-through to actionable sales intelligence.
+through to actionable commercial intelligence.
 
 Run with:
     streamlit run app.py
@@ -62,6 +62,42 @@ SETUP_COLORS = {"Full": C["full"], "Tx-strict": C["tx"], "Cust-only": C["cust"]}
 
 
 # ───────────────────────────────────────────────────────────────────────────
+# Visual helpers
+# ───────────────────────────────────────────────────────────────────────────
+PIPELINE_STAGES = ["Data", "Modeling", "Signals", "Value", "Distribution"]
+
+
+def _pipeline_progress(active_stage):
+    """Render an HTML pipeline progress indicator."""
+    parts = []
+    reached = False
+    for s in PIPELINE_STAGES:
+        if s == active_stage:
+            reached = True
+            bg, fg, fw = "#1976D2", "white", "bold"
+        elif not reached:
+            bg, fg, fw = "#E3F2FD", "#1976D2", "600"
+        else:
+            bg, fg, fw = "#F5F5F5", "#9E9E9E", "normal"
+        parts.append(
+            f"<span style='background:{bg};color:{fg};font-weight:{fw};"
+            f"padding:0.3em 0.8em;border-radius:4px;font-size:0.85em'>{s}</span>"
+        )
+    html = " <span style='color:#BDBDBD;font-size:0.9em'>→</span> ".join(parts)
+    st.markdown(f"<div style='margin-bottom:1em'>{html}</div>", unsafe_allow_html=True)
+
+
+def _elegant_divider():
+    """Render a refined gradient divider between major sections."""
+    st.markdown(
+        "<div style='margin:2em 0;height:2px;"
+        "background:linear-gradient(to right, transparent, #1976D2, #7B1FA2, transparent);'>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ───────────────────────────────────────────────────────────────────────────
 # Artifact loading
 # ───────────────────────────────────────────────────────────────────────────
 @st.cache_resource
@@ -111,7 +147,7 @@ SECTIONS = [
     "§8  Signal Architecture",
     "§9  Expected Client Value",
     "§10 Opportunity Frontier",
-    "§11 Sales Intelligence",
+    "§11 Commercial Intelligence",
     "§12 Distribution Intelligence",
 ]
 
@@ -136,6 +172,25 @@ def section_executive_summary():
     wf_df = a.get("wf_df")
 
     st.title("§1 — Executive Summary")
+
+    # Institutional dashboard header
+    st.markdown("""
+    <div style='background:linear-gradient(135deg, #f0f4ff 0%, #e8eaf6 100%);
+    padding:1.5em 2em;border-radius:10px;margin-bottom:1.5em;
+    border:1px solid #e0e0e0'>
+    <h2 style='margin:0 0 0.3em 0;color:#1976D2'>
+    \U0001f4c8 AlphaSignal</h2>
+    <p style='margin:0 0 0.8em 0;color:#546E7A;font-size:1.05em'>
+    Client Intelligence &amp; Distribution Analytics Platform</p>
+    <div style='display:flex;gap:2em;flex-wrap:wrap;color:#78909C;font-size:0.9em'>
+    <span><strong>Dataset:</strong> COFINFAD</span>
+    <span><strong>Clients:</strong> 48,723</span>
+    <span><strong>Transactions:</strong> 3.2 M</span>
+    <span><strong>Period:</strong> 2023</span>
+    </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown("""
     <div style='background:#f0f4ff;padding:1.2em 1.5em;border-left:4px solid #1976D2;
     border-radius:6px;margin-bottom:1.5em'>
@@ -179,6 +234,22 @@ def section_executive_summary():
         )
     else:
         c4.metric("Target Rate", f"{a['y_all'].mean():.1%}")
+
+    st.markdown("---")
+
+    # Strategy Overview
+    st.subheader("Strategy Overview")
+    st.markdown("""
+    AlphaSignal is structured as a **four-stage analytical pipeline**,
+    transforming raw transactional data into actionable distribution intelligence:
+
+    | Stage | Description |
+    |-------|-------------|
+    | **1 — Behavioural Prediction** | Machine learning models estimate disengagement risk and growth propensity from transactional behavioural data. |
+    | **2 — Signal Architecture** | Calibrated probabilities are combined with engagement intensity to construct behavioural signals representing client opportunity. |
+    | **3 — Economic Translation** | Signals are converted into Expected Client Value to monetise commercial opportunity at the individual client level. |
+    | **4 — Distribution Intelligence** | Risk-adjusted opportunity scores are used to allocate relationship management effort across the client base. |
+    """)
 
     st.markdown("---")
 
@@ -254,6 +325,7 @@ def section_executive_summary():
         "in depth. Sections follow the analytical pipeline sequentially — from "
         "raw data through to actionable intelligence."
     )
+    _elegant_divider()
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
@@ -263,6 +335,7 @@ def section_executive_summary():
 def section_problem_definition():
     a = load_artifacts()
     st.title("§2 — Problem Definition")
+    _pipeline_progress("Data")
 
     st.markdown("""
     <div style='background:#fff8e1;padding:1.2em 1.5em;border-left:4px solid #FFA000;
@@ -325,6 +398,7 @@ def section_problem_definition():
 def section_dataset():
     a = load_artifacts()
     st.title("§3 — Dataset Description")
+    _pipeline_progress("Data")
 
     cust = a["cust"]
     target_df = a["target_df"]
@@ -459,6 +533,7 @@ def section_dataset():
 def section_temporal():
     a = load_artifacts()
     st.title("§4 — Temporal Modeling Strategy")
+    _pipeline_progress("Modeling")
 
     st.markdown("""
     A rigorous temporal design prevents **look-ahead bias** — the most
@@ -601,6 +676,7 @@ def section_temporal():
 def section_features():
     a = load_artifacts()
     st.title("§5 — Feature Engineering & Explainability")
+    _pipeline_progress("Modeling")
 
     feat_names = a["feat_names_full"]
     trained = a["trained"]
@@ -753,6 +829,7 @@ def section_features():
 def section_models():
     a = load_artifacts()
     st.title("§6 — Machine Learning Models")
+    _pipeline_progress("Modeling")
 
     eval_df = a["eval_df"]
     y_te = a["y_te"]
@@ -952,6 +1029,7 @@ def section_models():
 def section_calibration():
     a = load_artifacts()
     st.title("§7 — Probability Calibration")
+    _pipeline_progress("Modeling")
 
     calib_comp = a.get("calib_comparison")
     rr_calib = a.get("rr_calib_test")
@@ -1084,6 +1162,7 @@ def section_calibration():
 def section_signals():
     a = load_artifacts()
     st.title("§8 — Signal Architecture")
+    _pipeline_progress("Signals")
 
     signals_df = a.get("signals_df")
     if signals_df is None:
@@ -1270,6 +1349,8 @@ def section_signals():
         st.pyplot(fig)
         plt.close(fig)
 
+    _elegant_divider()
+
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  §9 EXPECTED CLIENT VALUE                                             ║
@@ -1278,6 +1359,7 @@ def section_signals():
 def section_ecv():
     a = load_artifacts()
     st.title("§9 — Expected Client Value")
+    _pipeline_progress("Value")
 
     signals_df = a.get("signals_df")
     if signals_df is None:
@@ -1359,6 +1441,8 @@ def section_ecv():
     st.pyplot(fig)
     plt.close(fig)
 
+    _elegant_divider()
+
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  §10 OPPORTUNITY FRONTIER                                             ║
@@ -1367,6 +1451,7 @@ def section_ecv():
 def section_frontier():
     a = load_artifacts()
     st.title("§10 — Opportunity Frontier")
+    _pipeline_progress("Value")
 
     signals_df = a.get("signals_df")
     if signals_df is None or "opportunity_frontier_score" not in signals_df.columns:
@@ -1488,14 +1573,17 @@ def section_frontier():
     c2.metric("Frontier Only", f"{len(top_front - top_master)}")
     c3.metric("Master Only", f"{len(top_master - top_front)}")
 
+    _elegant_divider()
+
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
-# ║  §11 SALES INTELLIGENCE                                               ║
+# ║  §11 COMMERCIAL INTELLIGENCE                                          ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
 def section_sales():
     a = load_artifacts()
-    st.title("§11 — Sales Intelligence")
+    st.title("§11 — Commercial Intelligence")
+    _pipeline_progress("Distribution")
 
     signals_df = a.get("signals_df")
     top_opportunities = a.get("top_opportunities")
@@ -1642,6 +1730,7 @@ def section_sales():
 def section_distribution_intelligence():
     a = load_artifacts()
     st.title("§12 — Distribution Intelligence & Strategic Interpretation")
+    _pipeline_progress("Distribution")
 
     signals_df = a.get("signals_df")
     full_df = a.get("full_df")
@@ -2143,7 +2232,7 @@ def section_distribution_intelligence():
                                │
                                ▼
     ┌───────────────────────────────────────────────────────────────────┐
-    │         SALES & DISTRIBUTION INTELLIGENCE                        │
+    │     COMMERCIAL & DISTRIBUTION INTELLIGENCE                       │
     │                                                                   │
     │   Client rankings · Recommended actions · Client drilldown       │
     │   Strategic segmentation · Product opportunity signal             │
@@ -2162,6 +2251,7 @@ def section_distribution_intelligence():
         "distribution intelligence**. This positioning aligns directly "
         "with the research objectives of the Pictet EPFL project."
     )
+    _elegant_divider()
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
@@ -2179,7 +2269,7 @@ PAGES = {
     "§8  Signal Architecture": section_signals,
     "§9  Expected Client Value": section_ecv,
     "§10 Opportunity Frontier": section_frontier,
-    "§11 Sales Intelligence": section_sales,
+    "§11 Commercial Intelligence": section_sales,
     "§12 Distribution Intelligence": section_distribution_intelligence,
 }
 
