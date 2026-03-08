@@ -1,9 +1,16 @@
-# Multi-Signal Sales Intelligence — COFINFAD
+# AlphaSignal — Client Intelligence & Distribution Analytics Platform
 
-A **three-signal behavioral intelligence system** predicting customer
-disengagement risk, growth propensity, and engagement health for a
-Colombian fintech — built from transaction data observable through
-September 2023.
+A **three-signal client intelligence system** that transforms raw fintech
+transaction data into calibrated, risk-adjusted commercial opportunity
+scores — enabling relationship managers to prioritise upsell, retention,
+and monitoring actions with quantitative precision.
+
+Built on the **COFINFAD** Colombian Fintech Financial Analytics Dataset
+(48,723 clients · 3.2 M transactions · 2023).
+
+*Prepared for Pictet Asset Management — EPFL Machine Learning in Finance.*
+
+**Live demo:** [alphasignal.streamlit.app](https://alphasignal.streamlit.app/)
 
 ---
 
@@ -26,7 +33,7 @@ September 2023.
 15. [Master Commercial Signal](#master-commercial-signal)
 16. [Opportunity Frontier](#opportunity-frontier)
 17. [Client Prioritisation](#client-prioritisation)
-18. [Interactive Dashboard](#interactive-dashboard)
+18. [Strategic Report](#strategic-report)
 19. [Project Structure](#project-structure)
 20. [How to Run](#how-to-run)
 21. [Requirements](#requirements)
@@ -36,11 +43,11 @@ September 2023.
 
 ## Overview
 
-The project implements a **multi-signal sales intelligence system** built
-on the COFINFAD dataset. No contractual churn label exists — the
-pre-computed `churn_probability` column is a continuous score (0.1–0.5),
-not a ground-truth event. We therefore construct three behavioral signals
-from transaction data:
+The project implements a **client intelligence and distribution analytics
+platform** built on the COFINFAD dataset. No contractual churn label exists
+— the pre-computed `churn_probability` column is a continuous score
+(0.1–0.5), not a ground-truth event. We therefore construct three
+behavioral signals from transaction data:
 
 ```
 transactions data
@@ -57,7 +64,7 @@ ML models + rules
                     ↓                    ↓
            Master Commercial Signal
                     ↓
-        Sales Opportunity Ranking
+        Commercial Opportunity Ranking
 ```
 
 **Key results (test set):**
@@ -76,8 +83,13 @@ ML models + rules
 
 The system transforms raw behavioral transaction data into a multi-signal
 intelligence framework for client engagement prioritisation. The
-architecture mirrors modern client intelligence platforms used in asset
-management and financial institutions.
+architecture follows a four-stage analytical pipeline used in asset
+management distribution:
+
+1. **Behavioural Prediction** — ML models estimate disengagement risk and growth propensity
+2. **Signal Architecture** — Calibrated probabilities combined with engagement intensity
+3. **Economic Translation** — Signals converted into Expected Client Value
+4. **Distribution Intelligence** — Risk-adjusted scores allocate relationship management effort
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -87,12 +99,12 @@ management and financial institutions.
 └──────────────────────────┬──────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│              BEHAVIORAL FEATURE ENGINEERING                      │
+│              BEHAVIOURAL FEATURE ENGINEERING                     │
 │   Observation window: Jan – Sep 2023                            │
 │   • RFM aggregates (count, total, mean, recency, frequency)    │
 │   • Transaction-type shares (deposit, payment, transfer, …)    │
 │   • Trends (count slope, amount slope, late-ratio)              │
-│   • Behavioral indicators (max gap, weekend ratio, CV)          │
+│   • Behavioural indicators (max gap, weekend ratio, CV)         │
 │   • Customer attributes (demographics, products, satisfaction)  │
 └──────────────────────────┬──────────────────────────────────────┘
                            ↓
@@ -101,7 +113,7 @@ management and financial institutions.
 │                                                                 │
 │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
 │  │ Redemption Risk  │ │ Buy Propensity  │ │ Engagement Score│   │
-│  │ P(disengagement) │ │ P(growth)       │ │ behavioral index│   │
+│  │ P(disengagement) │ │ P(growth)       │ │ behavioural idx │   │
 │  │ XGBoost (calib.) │ │ RF (calibrated) │ │ rule-based      │   │
 │  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘   │
 │           └──────────┬────────┘───────────┬───────┘             │
@@ -122,11 +134,12 @@ management and financial institutions.
 └──────────────────────┬──────────────────────────────────────────┘
                        ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│            SALES INTELLIGENCE DASHBOARD                         │
-│   10 interactive pages: overview, data explorer, model          │
-│   performance, setup comparison, threshold analysis,            │
-│   explainability, master signal, walk-forward validation,       │
-│   calibration diagnostics, opportunity frontier                 │
+│        COMMERCIAL & DISTRIBUTION INTELLIGENCE                   │
+│   12-section strategic report: executive summary, data          │
+│   description, temporal strategy, features, models,             │
+│   calibration, signal architecture, expected client value,      │
+│   opportunity frontier, commercial intelligence,                │
+│   distribution intelligence & strategic interpretation          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -405,14 +418,14 @@ CommercialOpportunity ≈ P(growth) × Engagement × (1 − DisengagementRisk)
 ```
 
 This formulation mirrors expected-value scoring frameworks used in client
-intelligence systems in asset management. Rather than predicting a single
-behavioral outcome, the signal integrates:
+intelligence systems in asset management distribution. Rather than predicting
+a single behavioral outcome, the signal integrates:
 
 - **Growth potential** — probability of future activity increase
-- **Client engagement strength** — behavioral health indicator
+- **Client engagement strength** — behavioural health indicator
 - **Downside risk** — probability of disengagement
 
-to produce a unified opportunity score that can guide sales prioritisation.
+to produce a unified opportunity score that can guide commercial prioritisation.
 
 ### Expected Client Value
 
@@ -424,7 +437,7 @@ ExpectedClientValue = MasterSignal × tx_total
 ```
 
 This highlights clients who combine **high opportunity** with **high
-potential business value**, enabling dollar-weighted sales prioritisation.
+potential business value**, enabling dollar-weighted commercial prioritisation.
 
 ---
 
@@ -443,7 +456,7 @@ This chart helps identify three client clusters:
 - **Low opportunity** (bottom) — monitoring only
 
 The visualization translates behavioral signals into actionable client
-prioritisation insights for sales teams.
+prioritisation insights for distribution teams.
 
 ### Opportunity Frontier Score
 
@@ -479,7 +492,7 @@ Each customer receives a recommended action:
 | **Monitor** | All other clients |
 
 Clients are ranked by descending **Expected Client Value**. The top 100
-form the **sales opportunity list**.
+form the **commercial opportunity list**.
 
 | Action | Count | % |
 |--------|-------|---|
@@ -489,7 +502,7 @@ form the **sales opportunity list**.
 
 ---
 
-## Interactive Dashboard
+## Strategic Report
 
 **Live demo:** [alphasignal.streamlit.app](https://alphasignal.streamlit.app/)
 
@@ -498,20 +511,24 @@ form the **sales opportunity list**.
 streamlit run app.py
 ```
 
-Ten pages:
+The application is structured as a **12-section strategic narrative report**
+with a visual pipeline progress indicator tracking advancement through the
+analytical stages: Data → Modeling → Signals → Value → Distribution.
 
-| Page | Content |
-|------|---------|
-| **Overview** | Key metrics, temporal design, dataset summary |
-| **Data Explorer** | Target distribution, feature histograms by class |
-| **Model Performance** | Full metrics table, ROC/PR/calibration curves, confusion matrices |
-| **Setup Comparison** | Full vs Tx-strict vs Cust-only bar charts, ROC overlays, lift |
-| **Threshold Analysis** | Validation sweep, interactive threshold slider, test report |
-| **Explainability** | XGBoost importance, LR coefficients, SHAP analysis |
-| **Master Signal** | Commercial opportunity distribution, Expected Value vs Risk scatter, opportunity quadrant, top 100 by expected value, recommended actions, correlation matrix |
-| **Walk-Forward Validation** | Fold-by-fold results, ROC/PR AUC across temporal folds, stability analysis |
-| **Calibration Diagnostics** | Before/after calibration curves, Brier score comparison, prediction distributions |
-| **Opportunity Frontier** | Risk vs propensity frontier scatter, Frontier Score distribution, top clients by risk-adjusted opportunity |
+| § | Section | Pipeline Stage |
+|---|---------|----------------|
+| 1 | **Executive Summary** | Overview |
+| 2 | **Problem Definition** | Data |
+| 3 | **Dataset Description** | Data |
+| 4 | **Temporal Modeling Strategy** | Modeling |
+| 5 | **Feature Engineering & Explainability** | Modeling |
+| 6 | **Machine Learning Models** | Modeling |
+| 7 | **Probability Calibration** | Modeling |
+| 8 | **Signal Architecture** | Signals |
+| 9 | **Expected Client Value** | Value |
+| 10 | **Opportunity Frontier** | Value |
+| 11 | **Commercial Intelligence** | Distribution |
+| 12 | **Distribution Intelligence** | Distribution |
 
 ---
 
@@ -520,7 +537,7 @@ Ten pages:
 ```
 ├── README.md
 ├── requirements.txt
-├── app.py                          # Streamlit dashboard
+├── app.py                          # Streamlit strategic report (12 sections)
 ├── .gitignore
 ├── data/                           # (not tracked — place CSVs here)
 │   └── COFINFAD .../
@@ -529,8 +546,11 @@ Ten pages:
 ├── notebooks/
 │   ├── churn_modeling.py           # Full pipeline (percent-script)
 │   └── churn_modeling.ipynb        # Same pipeline as Jupyter notebook
-└── outputs/                        # (not tracked — generated by pipeline)
-    └── churn_artifacts.pkl         # Pickled models + predictions for dashboard
+└── outputs/                        # (generated by pipeline)
+    ├── churn_artifacts.pkl         # Pickled models + predictions for report
+    ├── evaluation_results.csv
+    ├── figures/
+    └── models/
 ```
 
 ---
