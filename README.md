@@ -10,23 +10,27 @@ September 2023.
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Dataset](#dataset)
-3. [Temporal Design](#temporal-design)
-4. [Target Definitions](#target-definitions)
-5. [Feature Engineering](#feature-engineering)
-6. [Three Feature Setups](#three-feature-setups)
-7. [Modeling](#modeling)
-8. [Leakage Controls](#leakage-controls)
-9. [Evaluation Protocol](#evaluation-protocol)
-10. [Results — Redemption Risk](#results--redemption-risk)
-11. [Multi-Signal Architecture](#multi-signal-architecture)
-12. [Master Commercial Signal](#master-commercial-signal)
-13. [Client Prioritisation](#client-prioritisation)
-14. [Interactive Dashboard](#interactive-dashboard)
-15. [Project Structure](#project-structure)
-16. [How to Run](#how-to-run)
-17. [Requirements](#requirements)
-18. [Limitations](#limitations)
+2. [System Architecture](#system-architecture)
+3. [Dataset](#dataset)
+4. [Temporal Design](#temporal-design)
+5. [Target Definitions](#target-definitions)
+6. [Feature Engineering](#feature-engineering)
+7. [Three Feature Setups](#three-feature-setups)
+8. [Modeling](#modeling)
+9. [Leakage Controls](#leakage-controls)
+10. [Evaluation Protocol](#evaluation-protocol)
+11. [Walk-Forward Temporal Validation](#walk-forward-temporal-validation)
+12. [Probability Calibration](#probability-calibration)
+13. [Results — Redemption Risk](#results--redemption-risk)
+14. [Multi-Signal Architecture](#multi-signal-architecture)
+15. [Master Commercial Signal](#master-commercial-signal)
+16. [Opportunity Frontier](#opportunity-frontier)
+17. [Client Prioritisation](#client-prioritisation)
+18. [Interactive Dashboard](#interactive-dashboard)
+19. [Project Structure](#project-structure)
+20. [How to Run](#how-to-run)
+21. [Requirements](#requirements)
+22. [Limitations](#limitations)
 
 ---
 
@@ -65,6 +69,75 @@ ML models + rules
 | Buy Propensity (Tx-strict) | RF | 0.779 |
 
 **Master Signal outputs:** 8,130 Upsell / 20,136 Retention / 20,457 Monitor
+
+---
+
+## System Architecture
+
+The system transforms raw behavioral transaction data into a multi-signal
+intelligence framework for client engagement prioritisation. The
+architecture mirrors modern client intelligence platforms used in asset
+management and financial institutions.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        RAW DATA                                 │
+│   customer_data.csv (48,723 clients × 54 features)              │
+│   transactions_data.csv (3.2M transactions, 2023)               │
+└──────────────────────────┬──────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────────┐
+│              BEHAVIORAL FEATURE ENGINEERING                      │
+│   Observation window: Jan – Sep 2023                            │
+│   • RFM aggregates (count, total, mean, recency, frequency)    │
+│   • Transaction-type shares (deposit, payment, transfer, …)    │
+│   • Trends (count slope, amount slope, late-ratio)              │
+│   • Behavioral indicators (max gap, weekend ratio, CV)          │
+│   • Customer attributes (demographics, products, satisfaction)  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      SIGNAL LAYER                               │
+│                                                                 │
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
+│  │ Redemption Risk  │ │ Buy Propensity  │ │ Engagement Score│   │
+│  │ P(disengagement) │ │ P(growth)       │ │ behavioral index│   │
+│  │ XGBoost (calib.) │ │ RF (calibrated) │ │ rule-based      │   │
+│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘   │
+│           └──────────┬────────┘───────────┬───────┘             │
+│                      ↓                    ↓                     │
+│         Isotonic Probability Calibration                        │
+└──────────────────────┬──────────────────────────────────────────┘
+                       ↓
+┌─────────────────────────────────────────────────────────────────┐
+│               MASTER COMMERCIAL SIGNAL                          │
+│   BuyPropensity × (1 − RedemptionRisk) × EngagementScore       │
+│                                                                 │
+│   ┌─────────────────────────────────────────┐                   │
+│   │  Expected Client Value = Master × tx    │                   │
+│   └─────────────────────────────────────────┘                   │
+│   ┌─────────────────────────────────────────┐                   │
+│   │  Opportunity Frontier Score = ECV/Risk  │                   │
+│   └─────────────────────────────────────────┘                   │
+└──────────────────────┬──────────────────────────────────────────┘
+                       ↓
+┌─────────────────────────────────────────────────────────────────┐
+│            SALES INTELLIGENCE DASHBOARD                         │
+│   10 interactive pages: overview, data explorer, model          │
+│   performance, setup comparison, threshold analysis,            │
+│   explainability, master signal, walk-forward validation,       │
+│   calibration diagnostics, opportunity frontier                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key architectural principles:**
+- **Temporal integrity:** strict observation/prediction window separation
+- **Calibrated probabilities:** isotonic calibration ensures signal
+  reliability for expected-value calculations
+- **Walk-forward validation:** expanding-window validation demonstrates
+  temporal stability of behavioral signals
+- **Risk-aware prioritisation:** Opportunity Frontier Score provides a
+  Sharpe-ratio-like metric for client ranking
 
 ---
 
@@ -202,6 +275,51 @@ precision@10%, recall@10%, lift at top decile, calibration curves.
 
 ---
 
+## Walk-Forward Temporal Validation
+
+To demonstrate model stability across time, we implement expanding-window
+walk-forward validation. Each fold rebuilds RFM features and the
+disengagement target from a different temporal cut:
+
+| Fold | Observation Window | Prediction Window |
+|------|-------------------|-------------------|
+| 1 | Jan – May 2023 | Jun – Jul 2023 |
+| 2 | Jan – Jun 2023 | Jul – Aug 2023 |
+| 3 | Jan – Jul 2023 | Aug – Sep 2023 |
+| 4 | Jan – Aug 2023 | Sep – Oct 2023 |
+| 5 | Jan – Sep 2023 | Oct – Nov 2023 |
+
+For each fold, an XGBoost model is trained and evaluated using ROC AUC,
+PR AUC, and Brier score. The procedure demonstrates that the behavioral
+disengagement signal is not dependent on a single temporal split — it
+remains stable as the training window expands.
+
+**Conclusion:** Low standard deviation in ROC AUC across folds confirms
+that the transaction-derived behavioral signals provide consistent
+predictive value regardless of the observation window cutoff.
+
+---
+
+## Probability Calibration
+
+Raw model probabilities may not correspond to true event frequencies.
+We apply **isotonic calibration** on the validation set to both the
+Redemption Risk and Buy Propensity models.
+
+**Why calibration matters:**
+- The Master Signal formula is multiplicative:
+  `BuyPropensity × (1 − RedemptionRisk) × Engagement`
+- This product is meaningful only if probabilities are well-calibrated
+- A prediction of 0.7 should correspond to ~70% observed event frequency
+- The Expected Client Value metric inherits any probability distortion
+
+**Evaluation:**
+- Calibration curves (reliability diagrams) before vs after calibration
+- Brier score comparison (lower = more reliable probabilities)
+- Isotonic calibration is fit on the validation set (never test)
+
+---
+
 ## Results — Redemption Risk
 
 ### All Models (Test Set)
@@ -310,6 +428,46 @@ potential business value**, enabling dollar-weighted sales prioritisation.
 
 ---
 
+## Opportunity Frontier
+
+### Opportunity Frontier Visualization
+
+A scatter chart displaying:
+- **X-axis:** Redemption Risk (probability of disengagement)
+- **Y-axis:** Buy Propensity (probability of growth)
+- **Color/Size:** Expected Client Value
+
+This chart helps identify three client clusters:
+- **High opportunity / low risk** (upper-left) — ideal upsell candidates
+- **High opportunity / high risk** (upper-right) — retention priority
+- **Low opportunity** (bottom) — monitoring only
+
+The visualization translates behavioral signals into actionable client
+prioritisation insights for sales teams.
+
+### Opportunity Frontier Score
+
+A quantitative metric inspired by return-risk tradeoffs in portfolio theory:
+
+```
+OpportunityFrontierScore = ExpectedClientValue / RedemptionRisk
+```
+
+Conceptually analogous to a Sharpe ratio: clients with a high ratio of
+expected opportunity to risk rank highest. This provides a complementary
+prioritisation dimension alongside the Master Signal:
+
+| Metric | What it measures |
+|--------|------------------|
+| **Master Signal** | Absolute opportunity (high value, any risk) |
+| **Frontier Score** | Risk-adjusted opportunity (high value per unit of risk) |
+
+Clients appearing at the top of the Frontier ranking but not the Master
+Signal ranking represent **hidden opportunities** — moderate absolute
+value but very favorable risk profiles.
+
+---
+
 ## Client Prioritisation
 
 Each customer receives a recommended action:
@@ -340,7 +498,7 @@ form the **sales opportunity list**.
 streamlit run app.py
 ```
 
-Seven pages:
+Ten pages:
 
 | Page | Content |
 |------|---------|
@@ -351,6 +509,9 @@ Seven pages:
 | **Threshold Analysis** | Validation sweep, interactive threshold slider, test report |
 | **Explainability** | XGBoost importance, LR coefficients, SHAP analysis |
 | **Master Signal** | Commercial opportunity distribution, Expected Value vs Risk scatter, opportunity quadrant, top 100 by expected value, recommended actions, correlation matrix |
+| **Walk-Forward Validation** | Fold-by-fold results, ROC/PR AUC across temporal folds, stability analysis |
+| **Calibration Diagnostics** | Before/after calibration curves, Brier score comparison, prediction distributions |
+| **Opportunity Frontier** | Risk vs propensity frontier scatter, Frontier Score distribution, top clients by risk-adjusted opportunity |
 
 ---
 
@@ -403,14 +564,17 @@ See [requirements.txt](requirements.txt) for pinned versions.
 ## Limitations
 
 1. **No contractual churn event** — targets are behavioural proxies.
-2. **Single temporal split** — one observation/prediction window pair;
-   no walk-forward validation.
-3. **Customer attributes assumed static** — untimestamped variables may
+2. **Customer attributes assumed static** — untimestamped variables may
    incorporate future information. The Tx-strict benchmark mitigates this.
-4. **12-month dataset** — limits generalisability to seasonal patterns.
-5. **Class imbalance** — 2.3% disengagement rate makes precision on the
+3. **12-month dataset** — limits generalisability to seasonal patterns.
+4. **Class imbalance** — 2.3% disengagement rate makes precision on the
    minority class challenging.
-6. **Multiplicative signal formulation** — the commercial opportunity
+5. **Multiplicative signal formulation** — the commercial opportunity
    score uses a multiplicative decomposition (P(growth) × P(retention) ×
    engagement); in production the functional form and any weights would
    be validated against downstream conversion or revenue KPIs.
+6. **Walk-forward uses simplified features** — the temporal validation
+   rebuilds RFM features for each fold but does not replicate the full
+   feature engineering pipeline (e.g., monthly trends). This is
+   sufficient to demonstrate signal stability but is not identical to
+   the primary evaluation.

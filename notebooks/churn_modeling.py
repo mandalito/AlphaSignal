@@ -662,6 +662,136 @@ fig.tight_layout(); plt.show()
 
 # %% [markdown]
 # ---
+# ## 8b. Walk-Forward Temporal Validation
+#
+# To verify model stability across time, we implement expanding-window
+# walk-forward validation. The training window grows progressively while
+# a 2-month prediction window slides forward.
+#
+# | Fold | Observation Window | Prediction Window |
+# |------|-------------------|-------------------|
+# | 1 | Jan – May 2023 | Jun – Jul 2023 |
+# | 2 | Jan – Jun 2023 | Jul – Aug 2023 |
+# | 3 | Jan – Jul 2023 | Aug – Sep 2023 |
+# | 4 | Jan – Aug 2023 | Sep – Oct 2023 |
+# | 5 | Jan – Sep 2023 | Oct – Nov 2023 |
+#
+# For each fold, we rebuild RFM features and the disengagement target,
+# then train XGBoost and evaluate. The goal is to demonstrate that
+# predictive signal remains stable regardless of the training cutoff.
+
+# %%
+print("\n=== Walk-Forward Temporal Validation ===\n")
+
+WF_FOLDS = [
+    {"obs_end": "2023-05-31", "pred_start": "2023-06-01", "pred_end": "2023-07-31", "obs_m": 5, "pred_m": 2},
+    {"obs_end": "2023-06-30", "pred_start": "2023-07-01", "pred_end": "2023-08-31", "obs_m": 6, "pred_m": 2},
+    {"obs_end": "2023-07-31", "pred_start": "2023-08-01", "pred_end": "2023-09-30", "obs_m": 7, "pred_m": 2},
+    {"obs_end": "2023-08-31", "pred_start": "2023-09-01", "pred_end": "2023-10-31", "obs_m": 8, "pred_m": 2},
+    {"obs_end": "2023-09-30", "pred_start": "2023-10-01", "pred_end": "2023-11-30", "obs_m": 9, "pred_m": 2},
+]
+
+def _build_wf_fold(txns_all, cust_ids, fold_cfg):
+    """Build simplified RFM features + disengagement target for one temporal fold."""
+    oe = pd.Timestamp(fold_cfg["obs_end"])
+    ps = pd.Timestamp(fold_cfg["pred_start"])
+    pe = pd.Timestamp(fold_cfg["pred_end"])
+    t_obs = txns_all[txns_all["date"] <= oe]
+    t_fut = txns_all[(txns_all["date"] >= ps) & (txns_all["date"] <= pe)]
+
+    # RFM features
+    agg = t_obs.groupby("customer_id").agg(
+        tx_count=("amount", "count"), tx_total=("amount", "sum"),
+        tx_mean=("amount", "mean"), tx_std=("amount", "std"),
+        tx_last=("date", "max"),
+    ).reset_index()
+    agg["tx_std"] = agg["tx_std"].fillna(0)
+    agg["tx_cv"] = agg["tx_std"] / agg["tx_mean"].clip(lower=1)
+    agg["tx_recency"] = (oe - agg["tx_last"]).dt.days
+    agg = agg.drop(columns=["tx_last"])
+
+    # Type shares
+    tct = t_obs.groupby(["customer_id", "type"]).size().unstack(fill_value=0)
+    tsh = tct.div(tct.sum(axis=1), axis=0)
+    tsh.columns = [f"sh_{c.lower()}" for c in tsh.columns]
+    tsh = tsh.reset_index()
+
+    fd = pd.DataFrame({"customer_id": cust_ids})
+    fd = fd.merge(agg, on="customer_id", how="left").merge(tsh, on="customer_id", how="left")
+    fcols = [c for c in fd.columns if c != "customer_id"]
+    for c in fcols:
+        fd[c] = fd[c].fillna(0)
+
+    # Target: disengagement
+    oc = t_obs.groupby("customer_id").size().rename("oc")
+    fc = t_fut.groupby("customer_id").size().rename("fc")
+    tgt = pd.DataFrame({"customer_id": cust_ids})
+    tgt = tgt.merge(oc.reset_index(), how="left").merge(fc.reset_index(), how="left")
+    tgt["oc"] = tgt["oc"].fillna(0).astype(int)
+    tgt["fc"] = tgt["fc"].fillna(0).astype(int)
+    om = tgt["oc"] / fold_cfg["obs_m"]
+    fm = tgt["fc"] / fold_cfg["pred_m"]
+    ar = np.where(om > 0, fm / om, np.where(tgt["fc"] > 0, 1.0, 0.0))
+    y = ((tgt["fc"] == 0) | (ar < 0.20)).astype(int).values
+    return fd[fcols].values, y
+
+wf_results = []
+for fi, fold in enumerate(WF_FOLDS):
+    Xf, yf = _build_wf_fold(txns, cust["customer_id"], fold)
+    i_tr, i_te = train_test_split(np.arange(len(yf)), test_size=0.20,
+                                   random_state=SEED, stratify=yf)
+    _imp = SimpleImputer(strategy="median"); _sc = StandardScaler()
+    Xf_tr = _sc.fit_transform(_imp.fit_transform(Xf[i_tr]))
+    Xf_te = _sc.transform(_imp.transform(Xf[i_te]))
+    neg_f, pos_f = (yf[i_tr] == 0).sum(), (yf[i_tr] == 1).sum()
+    spw_f = neg_f / pos_f if pos_f > 0 else 1.0
+    if HAS_XGB:
+        mf = XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.05,
+                           subsample=0.8, colsample_bytree=0.8,
+                           scale_pos_weight=spw_f, eval_metric="logloss",
+                           random_state=SEED, n_jobs=-1, verbosity=0)
+    else:
+        mf = HistGradientBoostingClassifier(max_iter=200, max_depth=4,
+                                            learning_rate=0.05, random_state=SEED)
+    mf.fit(Xf_tr, yf[i_tr])
+    ypf = mf.predict_proba(Xf_te)[:, 1]
+    wf_results.append({
+        "Fold": fi + 1,
+        "Obs_Window": f"Jan-{pd.Timestamp(fold['obs_end']).strftime('%b')}",
+        "Pred_Window": f"{pd.Timestamp(fold['pred_start']).strftime('%b')}-{pd.Timestamp(fold['pred_end']).strftime('%b')}",
+        "Target_Rate": yf.mean(),
+        "ROC_AUC": roc_auc_score(yf[i_te], ypf),
+        "PR_AUC": average_precision_score(yf[i_te], ypf),
+        "Brier": brier_score_loss(yf[i_te], ypf),
+    })
+    print(f"  Fold {fi+1}: Obs->{'Jan-'+pd.Timestamp(fold['obs_end']).strftime('%b'):10s}  "
+          f"Pred->{pd.Timestamp(fold['pred_start']).strftime('%b')+'-'+pd.Timestamp(fold['pred_end']).strftime('%b'):10s}  "
+          f"ROC {wf_results[-1]['ROC_AUC']:.4f}  PR {wf_results[-1]['PR_AUC']:.4f}")
+
+wf_df = pd.DataFrame(wf_results)
+print(f"\n  Walk-Forward Mean ROC AUC: {wf_df['ROC_AUC'].mean():.4f} +/- {wf_df['ROC_AUC'].std():.4f}")
+print(f"  Walk-Forward Mean PR AUC:  {wf_df['PR_AUC'].mean():.4f} +/- {wf_df['PR_AUC'].std():.4f}")
+
+# %%
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+folds_x = wf_df["Fold"].values
+for ax, metric, col, clr in [(axes[0], "ROC_AUC", "ROC AUC", "#1976D2"),
+                               (axes[1], "PR_AUC", "PR AUC", "#388E3C")]:
+    vals = wf_df[metric].values
+    ax.plot(folds_x, vals, "o-", color=clr, lw=2, ms=8, label=col)
+    ax.axhline(vals.mean(), color=clr, ls="--", lw=1, alpha=0.6,
+               label=f"Mean = {vals.mean():.4f}")
+    ax.fill_between(folds_x, vals.mean() - vals.std(), vals.mean() + vals.std(),
+                    alpha=0.15, color=clr)
+    ax.set_xlabel("Fold"); ax.set_ylabel(col)
+    ax.set_title(f"Walk-Forward {col}", fontweight="bold")
+    ax.set_xticks(folds_x); ax.legend(fontsize=8)
+
+fig.suptitle("Walk-Forward Temporal Validation — Expanding Window", y=1.02, fontweight="bold")
+fig.tight_layout(); plt.show()
+
+# %% [markdown]
+# ---
 # ## 9. Threshold Tuning (Validation Set Only)
 #
 # The decision threshold is selected by sweeping values on the
@@ -992,19 +1122,111 @@ bp_best_algo = max(bp_preds_test,
 bp_best_roc = roc_auc_score(y_growth_te, bp_preds_test[bp_best_algo])
 print(f"\n  Best Buy Propensity: {bp_best_algo} (ROC {bp_best_roc:.4f})")
 
+# %% [markdown]
+# ### 14a-bis. Probability Calibration
+#
+# Raw model probabilities may not correspond to true event frequencies.
+# We apply **isotonic calibration** on the validation set to improve
+# probability reliability — critical when signals feed into expected
+# value calculations.
+#
+# After calibration, a prediction of 0.7 should correspond approximately
+# to a 70 % observed event rate.
+
 # %%
-# ── Generate all-customer scores ──
-# Redemption Risk (Full setup, best algo → all customers)
+from sklearn.calibration import CalibratedClassifierCV
+
+# Calibrate Redemption Risk model (Full/best_algo) on validation set
+_rr_model = trained[("Full", best_algo)]
+rr_calibrator = CalibratedClassifierCV(_rr_model, method="isotonic", cv="prefit")
+rr_calibrator.fit(d_full[1], d_full[4])  # Xva, y_va
+
+# Calibrate Buy Propensity model on validation set
+_bp_model = bp_trained[bp_best_algo]
+bp_calibrator = CalibratedClassifierCV(_bp_model, method="isotonic", cv="prefit")
+bp_calibrator.fit(d_tx[1], y_growth[idx_val])  # Xva_tx, y_growth_va
+
+# Calibrated test predictions
+rr_calib_test = rr_calibrator.predict_proba(d_full[2])[:, 1]
+bp_calib_test = bp_calibrator.predict_proba(d_tx[2])[:, 1]
+
+# Brier score comparison
+rr_uncalib_test = preds_test[("Full", best_algo)]
+brier_rr_before = brier_score_loss(y_te, rr_uncalib_test)
+brier_rr_after  = brier_score_loss(y_te, rr_calib_test)
+
+bp_uncalib_test = bp_preds_test[bp_best_algo]
+brier_bp_before = brier_score_loss(y_growth[idx_test], bp_uncalib_test)
+brier_bp_after  = brier_score_loss(y_growth[idx_test], bp_calib_test)
+
+calib_comparison = pd.DataFrame([
+    {"Signal": "Redemption Risk", "Brier_Before": brier_rr_before,
+     "Brier_After": brier_rr_after, "Improvement": brier_rr_before - brier_rr_after},
+    {"Signal": "Buy Propensity", "Brier_Before": brier_bp_before,
+     "Brier_After": brier_bp_after, "Improvement": brier_bp_before - brier_bp_after},
+])
+print("\nProbability Calibration — Brier Score Comparison (lower = better):")
+print(calib_comparison.to_string(index=False, float_format="{:.6f}".format))
+
+# %%
+# ── Calibration diagnostic plots ──
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+for yp, label, ls, clr in [
+    (rr_uncalib_test, "Before calibration", "--", "#D32F2F"),
+    (rr_calib_test, "After calibration", "-", "#1976D2"),
+]:
+    frac_pos, mean_pred = calibration_curve(y_te, yp, n_bins=10, strategy="uniform")
+    axes[0, 0].plot(mean_pred, frac_pos, f"o{ls}", ms=5, lw=1.5, color=clr, label=label)
+axes[0, 0].plot([0, 1], [0, 1], "k--", lw=0.7, alpha=0.5)
+axes[0, 0].set_xlabel("Mean predicted probability")
+axes[0, 0].set_ylabel("Fraction of positives")
+axes[0, 0].set_title("Redemption Risk — Calibration Curve", fontweight="bold")
+axes[0, 0].legend(fontsize=8)
+
+axes[0, 1].hist(rr_uncalib_test, bins=50, alpha=0.5, color="#D32F2F",
+                label=f"Before (Brier={brier_rr_before:.4f})", density=True)
+axes[0, 1].hist(rr_calib_test, bins=50, alpha=0.5, color="#1976D2",
+                label=f"After (Brier={brier_rr_after:.4f})", density=True)
+axes[0, 1].set_title("Redemption Risk — Prediction Distribution", fontweight="bold")
+axes[0, 1].legend(fontsize=8)
+
+for yp, label, ls, clr in [
+    (bp_uncalib_test, "Before calibration", "--", "#D32F2F"),
+    (bp_calib_test, "After calibration", "-", "#388E3C"),
+]:
+    frac_pos, mean_pred = calibration_curve(y_growth[idx_test], yp,
+                                             n_bins=10, strategy="uniform")
+    axes[1, 0].plot(mean_pred, frac_pos, f"o{ls}", ms=5, lw=1.5, color=clr, label=label)
+axes[1, 0].plot([0, 1], [0, 1], "k--", lw=0.7, alpha=0.5)
+axes[1, 0].set_xlabel("Mean predicted probability")
+axes[1, 0].set_ylabel("Fraction of positives")
+axes[1, 0].set_title("Buy Propensity — Calibration Curve", fontweight="bold")
+axes[1, 0].legend(fontsize=8)
+
+axes[1, 1].hist(bp_uncalib_test, bins=50, alpha=0.5, color="#D32F2F",
+                label=f"Before (Brier={brier_bp_before:.4f})", density=True)
+axes[1, 1].hist(bp_calib_test, bins=50, alpha=0.5, color="#388E3C",
+                label=f"After (Brier={brier_bp_after:.4f})", density=True)
+axes[1, 1].set_title("Buy Propensity — Prediction Distribution", fontweight="bold")
+axes[1, 1].legend(fontsize=8)
+
+fig.suptitle("Probability Calibration Diagnostics", y=1.01, fontweight="bold")
+fig.tight_layout(); plt.show()
+
+# %%
+# ── Generate all-customer scores (using calibrated models) ──
+# Redemption Risk (Full setup, calibrated → all customers)
 X_full_all = pre_full.transform(full_df[FULL_FEAT])
-redemption_risk_all = trained[("Full", best_algo)].predict_proba(X_full_all)[:, 1]
+redemption_risk_all = rr_calibrator.predict_proba(X_full_all)[:, 1]
 
-# Buy Propensity (Tx-strict, best BP algo → all customers)
+# Buy Propensity (Tx-strict, calibrated → all customers)
 X_tx_all = pre_tx.transform(tx_df[TX_FEAT])
-buy_propensity_all = bp_trained[bp_best_algo].predict_proba(X_tx_all)[:, 1]
+buy_propensity_all = bp_calibrator.predict_proba(X_tx_all)[:, 1]
 
-print(f"  Redemption Risk — min {redemption_risk_all.min():.4f}  "
+print(f"  Redemption Risk (calibrated) — min {redemption_risk_all.min():.4f}  "
       f"max {redemption_risk_all.max():.4f}  mean {redemption_risk_all.mean():.4f}")
-print(f"  Buy Propensity  — min {buy_propensity_all.min():.4f}  "
+print(f"  Buy Propensity  (calibrated) — min {buy_propensity_all.min():.4f}  "
       f"max {buy_propensity_all.max():.4f}  mean {buy_propensity_all.mean():.4f}")
 
 # %% [markdown]
@@ -1103,6 +1325,13 @@ _tx_total = full_df["tx_total"].fillna(0).values if "tx_total" in full_df.column
     else tx_feats["tx_total"].fillna(0).values
 signals_df["expected_client_value"] = signals_df["master_signal"] * _tx_total
 
+# Opportunity Frontier Score — ECV / Risk (analogous to Sharpe ratio)
+# Clients with high expected value and low risk rank highest.
+_rr_floor = signals_df["redemption_risk"].clip(lower=0.01)  # floor to avoid div/0
+signals_df["opportunity_frontier_score"] = signals_df["expected_client_value"] / _rr_floor
+# Normalise to [0, 1] for comparability
+signals_df["opportunity_frontier_score"] = _mms(signals_df["opportunity_frontier_score"].values)
+
 conditions = [
     (signals_df["buy_propensity"] > 0.6) & (signals_df["redemption_risk"] < 0.3),
     signals_df["redemption_risk"] > 0.6,
@@ -1159,6 +1388,36 @@ ax.set_title("Expected Value vs Redemption Risk", fontweight="bold")
 fig.tight_layout(); plt.show()
 
 # %%
+# ── Opportunity Frontier — Risk vs Propensity coloured by ECV ──
+fig, ax = plt.subplots(figsize=(10, 7))
+_ecv_clip = signals_df["expected_client_value"].clip(upper=signals_df["expected_client_value"].quantile(0.99))
+sc3 = ax.scatter(
+    signals_df["redemption_risk"],
+    signals_df["buy_propensity"],
+    c=_ecv_clip,
+    s=np.clip(_ecv_clip / _ecv_clip.max() * 60, 2, 60),
+    cmap="plasma", alpha=0.45,
+)
+plt.colorbar(sc3, ax=ax, label="Expected Client Value")
+ax.set_xlabel("Redemption Risk (horizontal)")
+ax.set_ylabel("Buy Propensity (vertical)")
+ax.set_title("Opportunity Frontier\nHigh propensity + low risk = best opportunity",
+             fontweight="bold")
+ax.axhline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+ax.axvline(0.3, color="#9e9e9e", ls="--", lw=0.7)
+ax.text(0.15, 0.8, "HIGH OPP\nLOW RISK", fontsize=9, fontweight="bold",
+        color="#388E3C", ha="center", alpha=0.7)
+ax.text(0.8, 0.8, "HIGH OPP\nHIGH RISK", fontsize=9, fontweight="bold",
+        color="#FFA000", ha="center", alpha=0.7)
+ax.text(0.5, 0.15, "LOW OPPORTUNITY", fontsize=9, fontweight="bold",
+        color="#9e9e9e", ha="center", alpha=0.7)
+fig.tight_layout(); plt.show()
+
+print(f"\n  Opportunity Frontier Score — mean {signals_df['opportunity_frontier_score'].mean():.4f}  "
+      f"median {signals_df['opportunity_frontier_score'].median():.4f}  "
+      f"max {signals_df['opportunity_frontier_score'].max():.4f}")
+
+# %%
 print("=" * 60)
 print("  Pipeline complete — Multi-Signal Sales Intelligence")
 print("=" * 60)
@@ -1196,6 +1455,7 @@ _artifacts = {
     "y_te": y_all[idx_test],
     "y_va": y_all[idx_val],
     "y_growth": y_growth,
+    "y_growth_te": y_growth[idx_test],
     # Indices
     "idx_train": idx_train,
     "idx_val": idx_val,
@@ -1227,6 +1487,14 @@ _artifacts = {
     "top_opportunities": top_opportunities,
     "bp_preds_test": bp_preds_test,
     "bp_preds_val": bp_preds_val,
+    # Walk-Forward Validation
+    "wf_df": wf_df,
+    # Probability Calibration
+    "calib_comparison": calib_comparison,
+    "rr_calib_test": rr_calib_test,
+    "rr_uncalib_test": rr_uncalib_test,
+    "bp_calib_test": bp_calib_test,
+    "bp_uncalib_test": bp_uncalib_test,
 }
 
 _out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "outputs")

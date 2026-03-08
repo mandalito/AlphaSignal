@@ -112,6 +112,9 @@ page = st.sidebar.radio(
         "🎚️ Threshold Analysis",
         "🧠 Explainability",
         "📡 Master Signal",
+        "🔄 Walk-Forward Validation",
+        "📐 Calibration Diagnostics",
+        "🎯 Opportunity Frontier",
     ],
 )
 
@@ -946,6 +949,394 @@ def page_master_signal():
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  PAGE 8: WALK-FORWARD VALIDATION                                      ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def page_walk_forward():
+    a = load_artifacts()
+    st.title("Walk-Forward Temporal Validation")
+
+    wf_df = a.get("wf_df")
+    if wf_df is None:
+        st.error(
+            "Walk-forward results not found. Re-run the pipeline:\n\n"
+            "```\npython3 notebooks/churn_modeling.py\n```"
+        )
+        st.stop()
+
+    st.markdown("""
+    > **Expanding-window walk-forward validation** tests whether the
+    > disengagement signal remains stable as the training window grows.
+    > Each fold rebuilds features and targets from a different temporal
+    > cut, then trains and evaluates an XGBoost model.
+    """)
+
+    # Summary metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Mean ROC AUC",
+              f"{wf_df['ROC_AUC'].mean():.4f}",
+              help=f"± {wf_df['ROC_AUC'].std():.4f}")
+    c2.metric("Mean PR AUC",
+              f"{wf_df['PR_AUC'].mean():.4f}",
+              help=f"± {wf_df['PR_AUC'].std():.4f}")
+    c3.metric("Folds", str(len(wf_df)))
+
+    st.markdown("---")
+
+    # Fold results table
+    st.subheader("Fold-by-Fold Results")
+    fmt = {c: "{:.4f}" for c in wf_df.columns
+           if c not in ("Fold", "Obs_Window", "Pred_Window")}
+    if "Target_Rate" in fmt:
+        fmt["Target_Rate"] = "{:.3f}"
+    st.dataframe(
+        wf_df.style.format(fmt).highlight_max(
+            subset=["ROC_AUC", "PR_AUC"], color="#c8e6c9"
+        ).highlight_min(subset=["Brier"], color="#c8e6c9"),
+        width="stretch", hide_index=True,
+    )
+
+    st.markdown("---")
+
+    # ROC AUC and PR AUC over folds
+    st.subheader("Performance Across Temporal Folds")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    folds_x = wf_df["Fold"].values
+
+    for ax, metric, col, clr in [(axes[0], "ROC_AUC", "ROC AUC", C["xgb"]),
+                                   (axes[1], "PR_AUC", "PR AUC", C["rf"])]:
+        vals = wf_df[metric].values
+        ax.plot(folds_x, vals, "o-", color=clr, lw=2, ms=8, label=col)
+        ax.axhline(vals.mean(), color=clr, ls="--", lw=1, alpha=0.6,
+                   label=f"Mean = {vals.mean():.4f}")
+        ax.fill_between(folds_x, vals.mean() - vals.std(),
+                        vals.mean() + vals.std(), alpha=0.15, color=clr)
+        ax.set_xlabel("Fold"); ax.set_ylabel(col)
+        ax.set_title(f"Walk-Forward {col}", fontweight="bold")
+        ax.set_xticks(folds_x); ax.legend(fontsize=8)
+
+    fig.suptitle("Walk-Forward Temporal Validation — Expanding Window",
+                 y=1.02, fontweight="bold")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Conclusion
+    roc_std = wf_df["ROC_AUC"].std()
+    if roc_std < 0.03:
+        st.success(
+            f"**Stable signal.** ROC AUC standard deviation across folds is "
+            f"only {roc_std:.4f}, indicating the behavioral disengagement "
+            f"signal is robust to the choice of training cutoff."
+        )
+    else:
+        st.warning(
+            f"ROC AUC standard deviation across folds is {roc_std:.4f}. "
+            f"Some temporal instability detected — performance varies "
+            f"with the training window."
+        )
+
+    st.markdown("""
+    **Methodology:**
+    - Fold 1: Train on Jan–May, predict Jun–Jul
+    - Fold 2: Train on Jan–Jun, predict Jul–Aug
+    - Fold 3: Train on Jan–Jul, predict Aug–Sep
+    - Fold 4: Train on Jan–Aug, predict Sep–Oct
+    - Fold 5: Train on Jan–Sep, predict Oct–Nov
+
+    Features are rebuilt from raw transactions for each fold. The target
+    (disengagement) is reconstructed for each prediction window.
+    """)
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  PAGE 9: CALIBRATION DIAGNOSTICS                                      ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def page_calibration():
+    a = load_artifacts()
+    st.title("Probability Calibration Diagnostics")
+
+    calib_comp = a.get("calib_comparison")
+    rr_calib = a.get("rr_calib_test")
+    rr_uncalib = a.get("rr_uncalib_test")
+    bp_calib = a.get("bp_calib_test")
+    bp_uncalib = a.get("bp_uncalib_test")
+    y_te = a["y_te"]
+    y_growth_te = a.get("y_growth_te")
+
+    if calib_comp is None:
+        st.error(
+            "Calibration data not found. Re-run the pipeline:\n\n"
+            "```\npython3 notebooks/churn_modeling.py\n```"
+        )
+        st.stop()
+
+    st.markdown("""
+    > **Probability calibration** ensures that predicted probabilities
+    > correspond to true event frequencies. A prediction of 0.7 should
+    > mean the event occurs ~70% of the time. This is critical when
+    > probabilities feed into expected-value calculations like the
+    > Master Signal and Expected Client Value.
+    """)
+
+    # Brier score comparison table
+    st.subheader("Brier Score Comparison (lower = better)")
+    st.dataframe(
+        calib_comp.style.format({
+            "Brier_Before": "{:.6f}", "Brier_After": "{:.6f}",
+            "Improvement": "{:.6f}"
+        }).highlight_max(subset=["Improvement"], color="#c8e6c9"),
+        width="stretch", hide_index=True,
+    )
+
+    st.markdown("---")
+
+    # Calibration curves — Redemption Risk
+    st.subheader("Redemption Risk — Calibration Curves")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    for yp, label, ls, clr in [
+        (rr_uncalib, "Before calibration", "--", C["disengaged"]),
+        (rr_calib, "After calibration", "-", C["xgb"]),
+    ]:
+        frac_pos, mean_pred = calibration_curve(y_te, yp, n_bins=10,
+                                                 strategy="uniform")
+        axes[0].plot(mean_pred, frac_pos, f"o{ls}", ms=5, lw=1.5,
+                     color=clr, label=label)
+    axes[0].plot([0, 1], [0, 1], "k--", lw=0.7, alpha=0.5)
+    axes[0].set_xlabel("Mean predicted probability")
+    axes[0].set_ylabel("Fraction of positives")
+    axes[0].set_title("Redemption Risk — Calibration", fontweight="bold")
+    axes[0].legend(fontsize=8)
+
+    brier_before = brier_score_loss(y_te, rr_uncalib)
+    brier_after = brier_score_loss(y_te, rr_calib)
+    axes[1].hist(rr_uncalib, bins=50, alpha=0.5, color=C["disengaged"],
+                 label=f"Before (Brier={brier_before:.4f})", density=True)
+    axes[1].hist(rr_calib, bins=50, alpha=0.5, color=C["xgb"],
+                 label=f"After (Brier={brier_after:.4f})", density=True)
+    axes[1].set_title("Prediction Distribution", fontweight="bold")
+    axes[1].legend(fontsize=8)
+
+    fig.suptitle("Redemption Risk — Before vs After Calibration",
+                 fontweight="bold")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Calibration curves — Buy Propensity
+    if bp_calib is not None and y_growth_te is not None:
+        st.subheader("Buy Propensity — Calibration Curves")
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        for yp, label, ls, clr in [
+            (bp_uncalib, "Before calibration", "--", C["disengaged"]),
+            (bp_calib, "After calibration", "-", C["rf"]),
+        ]:
+            frac_pos, mean_pred = calibration_curve(y_growth_te, yp,
+                                                     n_bins=10,
+                                                     strategy="uniform")
+            axes[0].plot(mean_pred, frac_pos, f"o{ls}", ms=5, lw=1.5,
+                         color=clr, label=label)
+        axes[0].plot([0, 1], [0, 1], "k--", lw=0.7, alpha=0.5)
+        axes[0].set_xlabel("Mean predicted probability")
+        axes[0].set_ylabel("Fraction of positives")
+        axes[0].set_title("Buy Propensity — Calibration", fontweight="bold")
+        axes[0].legend(fontsize=8)
+
+        bp_brier_before = brier_score_loss(y_growth_te, bp_uncalib)
+        bp_brier_after = brier_score_loss(y_growth_te, bp_calib)
+        axes[1].hist(bp_uncalib, bins=50, alpha=0.5, color=C["disengaged"],
+                     label=f"Before (Brier={bp_brier_before:.4f})", density=True)
+        axes[1].hist(bp_calib, bins=50, alpha=0.5, color=C["rf"],
+                     label=f"After (Brier={bp_brier_after:.4f})", density=True)
+        axes[1].set_title("Prediction Distribution", fontweight="bold")
+        axes[1].legend(fontsize=8)
+
+        fig.suptitle("Buy Propensity — Before vs After Calibration",
+                     fontweight="bold")
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    st.markdown("---")
+
+    st.markdown("""
+    **Why calibration matters:**
+    - The Master Signal formula is `BuyPropensity × (1 − RedemptionRisk) × Engagement`
+    - Well-calibrated probabilities ensure this product represents a
+      genuine expected-value decomposition
+    - Without calibration, overconfident or underconfident probabilities
+      distort the Expected Client Value metric
+    - Isotonic calibration was applied using the validation set (never test)
+    """)
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  PAGE 10: OPPORTUNITY FRONTIER                                        ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def page_opportunity_frontier():
+    a = load_artifacts()
+    st.title("Opportunity Frontier")
+
+    signals_df = a.get("signals_df")
+    if signals_df is None or "opportunity_frontier_score" not in signals_df.columns:
+        st.error(
+            "Opportunity Frontier data not found. Re-run the pipeline:\n\n"
+            "```\npython3 notebooks/churn_modeling.py\n```"
+        )
+        st.stop()
+
+    st.markdown("""
+    > **Opportunity Frontier** — a risk-aware opportunity analysis inspired
+    > by portfolio theory. The Opportunity Frontier Score measures the
+    > return-risk tradeoff: **Expected Client Value / Redemption Risk**.
+    >
+    > Clients with high expected value and low disengagement risk rank
+    > highest — analogous to high-Sharpe-ratio assets in portfolio management.
+    """)
+
+    has_ecv = "expected_client_value" in signals_df.columns
+
+    # Key metrics
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Mean Frontier Score",
+              f"{signals_df['opportunity_frontier_score'].mean():.3f}")
+    c2.metric("Median Frontier Score",
+              f"{signals_df['opportunity_frontier_score'].median():.3f}")
+    if has_ecv:
+        c3.metric("Median Expected Value",
+                  f"{signals_df['expected_client_value'].median():,.0f}")
+    else:
+        c3.metric("Clients", f"{len(signals_df):,}")
+    c4.metric("Mean Redemption Risk",
+              f"{signals_df['redemption_risk'].mean():.3f}")
+
+    st.markdown("---")
+
+    # Opportunity Frontier scatter
+    st.subheader("Opportunity Frontier — Risk vs Propensity")
+    st.markdown("""
+    **X-axis:** Redemption Risk (probability of disengagement)
+    **Y-axis:** Buy Propensity (probability of growth)
+    **Color/Size:** Expected Client Value
+
+    Ideal clients sit in the **upper-left** quadrant: high growth
+    propensity with low disengagement risk.
+    """)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    _ecv = signals_df["expected_client_value"] if has_ecv else signals_df["master_signal"]
+    _ecv_clip = _ecv.clip(upper=_ecv.quantile(0.99))
+    _sizes = np.clip(_ecv_clip / max(_ecv_clip.max(), 1e-9) * 60, 2, 60)
+
+    sc = ax.scatter(
+        signals_df["redemption_risk"],
+        signals_df["buy_propensity"],
+        c=_ecv_clip, s=_sizes,
+        cmap="plasma", alpha=0.45,
+    )
+    plt.colorbar(sc, ax=ax, label="Expected Client Value")
+    ax.set_xlabel("Redemption Risk")
+    ax.set_ylabel("Buy Propensity")
+    ax.set_title("Opportunity Frontier\nHigh propensity + low risk = best opportunity",
+                 fontweight="bold")
+    ax.axhline(0.6, color="#9e9e9e", ls="--", lw=0.7)
+    ax.axvline(0.3, color="#9e9e9e", ls="--", lw=0.7)
+    ax.text(0.15, 0.8, "HIGH OPP\nLOW RISK", fontsize=9, fontweight="bold",
+            color="#388E3C", ha="center", alpha=0.7)
+    ax.text(0.8, 0.8, "HIGH OPP\nHIGH RISK", fontsize=9, fontweight="bold",
+            color="#FFA000", ha="center", alpha=0.7)
+    ax.text(0.5, 0.15, "LOW OPPORTUNITY", fontsize=9, fontweight="bold",
+            color="#9e9e9e", ha="center", alpha=0.7)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Opportunity Frontier Score distribution
+    st.subheader("Opportunity Frontier Score Distribution")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.hist(signals_df["opportunity_frontier_score"], bins=50,
+            color="#7B1FA2", alpha=0.85, edgecolor="white")
+    ax.set_xlabel("Opportunity Frontier Score (normalised)")
+    ax.set_ylabel("Count")
+    ax.set_title("Distribution of Opportunity Frontier Score", fontweight="bold")
+    ax.axvline(signals_df["opportunity_frontier_score"].mean(), color="black",
+               ls="--", lw=1,
+               label=f"Mean = {signals_df['opportunity_frontier_score'].mean():.3f}")
+    ax.legend()
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.markdown("---")
+
+    # Top clients by Opportunity Frontier Score
+    st.subheader("Top 100 Clients by Opportunity Frontier Score")
+    top_frontier = signals_df.sort_values(
+        "opportunity_frontier_score", ascending=False
+    ).head(100).reset_index(drop=True)
+
+    _fmt = {
+        "buy_propensity": "{:.4f}",
+        "redemption_risk": "{:.4f}",
+        "engagement_score": "{:.4f}",
+        "master_signal": "{:.4f}",
+        "opportunity_frontier_score": "{:.4f}",
+    }
+    if has_ecv:
+        _fmt["expected_client_value"] = "{:,.0f}"
+
+    display_cols = ["customer_id", "opportunity_frontier_score",
+                    "buy_propensity", "redemption_risk",
+                    "engagement_score", "master_signal",
+                    "recommended_action"]
+    if has_ecv:
+        display_cols.insert(2, "expected_client_value")
+    display_cols = [c for c in display_cols if c in top_frontier.columns]
+
+    st.dataframe(
+        top_frontier[display_cols].style.format(_fmt)
+            .background_gradient(
+                subset=["opportunity_frontier_score"], cmap="Purples"),
+        width="stretch", hide_index=True,
+    )
+
+    st.markdown("---")
+
+    # Comparison: Frontier Score vs Master Signal ranking
+    st.subheader("Ranking Comparison: Frontier Score vs Master Signal")
+    st.markdown("""
+    The Opportunity Frontier Score prioritises clients with the best
+    **risk-adjusted opportunity** (high value, low risk), while the
+    Master Signal prioritises **absolute opportunity** regardless of risk.
+
+    Clients appearing at the top of the Frontier ranking but not the
+    Master Signal ranking represent **hidden opportunities** — moderate
+    value but very low risk.
+    """)
+
+    top_master = set(signals_df.nlargest(100, "master_signal")["customer_id"])
+    top_front = set(top_frontier["customer_id"])
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("In Both Top 100",
+              f"{len(top_master & top_front)}")
+    c2.metric("Frontier Only",
+              f"{len(top_front - top_master)}")
+    c3.metric("Master Only",
+              f"{len(top_master - top_front)}")
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  ROUTER                                                               ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
@@ -957,6 +1348,9 @@ PAGES = {
     "🎚️ Threshold Analysis": page_threshold,
     "🧠 Explainability": page_explainability,
     "📡 Master Signal": page_master_signal,
+    "🔄 Walk-Forward Validation": page_walk_forward,
+    "📐 Calibration Diagnostics": page_calibration,
+    "🎯 Opportunity Frontier": page_opportunity_frontier,
 }
 
 PAGES[page]()
