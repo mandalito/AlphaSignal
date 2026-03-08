@@ -112,6 +112,7 @@ SECTIONS = [
     "§9  Expected Client Value",
     "§10 Opportunity Frontier",
     "§11 Sales Intelligence",
+    "§12 Distribution Intelligence",
 ]
 
 section = st.sidebar.radio("Navigate", SECTIONS)
@@ -1629,6 +1630,377 @@ def section_sales():
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  §12 DISTRIBUTION INTELLIGENCE & STRATEGIC INTERPRETATION              ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def section_distribution_intelligence():
+    a = load_artifacts()
+    st.title("§12 — Distribution Intelligence & Strategic Interpretation")
+
+    signals_df = a.get("signals_df")
+    full_df = a.get("full_df")
+
+    if signals_df is None:
+        st.error("Signal data not found. Re-run the pipeline.")
+        st.stop()
+
+    has_ecv = "expected_client_value" in signals_df.columns
+    has_frontier = "opportunity_frontier_score" in signals_df.columns
+
+    # ─── Part 1: Commercial Interpretation ─────────────────────────────
+    st.markdown("""
+    <div style='background:#e8eaf6;padding:1.2em 1.5em;border-left:4px solid #3F51B5;
+    border-radius:6px;margin-bottom:1.5em'>
+    <strong>From prediction to distribution strategy.</strong> This section
+    bridges the gap between statistical modelling and asset management
+    distribution analytics — interpreting every signal through a
+    commercial lens and sketching the path toward a full
+    client × product intelligence platform.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.header("Part 1 — Commercial Interpretation of the Signals")
+
+    st.markdown("""
+    The AlphaSignal system approximates **expected commercial opportunity**
+    using a multiplicative decomposition:
+
+    $$\\text{CommercialOpportunity} \\approx P(\\text{growth}) \\times \\text{Engagement} \\times (1 - P(\\text{disengagement}))$$
+
+    Each component carries a distinct business meaning:
+
+    | Component | Signal | Commercial Interpretation |
+    |-----------|--------|---------------------------|
+    | $P(\\text{growth})$ | **Buy Propensity** | Probability the client will increase transactional activity — a proxy for wallet-share expansion |
+    | Engagement | **Engagement Score** | Intensity and consistency of the existing relationship — behavioural depth of the client |
+    | $1 - P(\\text{disengagement})$ | **1 − Redemption Risk** | Probability the client remains active — the retention dimension |
+
+    The **Master Signal** multiplies these three dimensions so that
+    **all three must be favourable** for a client to rank highly.
+    A client with strong growth propensity but high disengagement risk
+    will be penalised — exactly as a high-return but high-volatility
+    asset would be penalised in a risk-adjusted portfolio framework.
+
+    This formulation mirrors **expected-value scoring** used in
+    institutional client intelligence systems across asset management
+    distribution. It identifies clients where:
+
+    - growth probability is **high**
+    - engagement is **strong**
+    - disengagement risk is **manageable**
+    """)
+
+    st.markdown("---")
+
+    # ─── Part 2: Client Drilldown ──────────────────────────────────────
+    st.header("Part 2 — Client Drilldown")
+    st.markdown("""
+    Select a client to inspect their full signal profile and receive
+    an automated commercial interpretation — the kind of view a
+    relationship manager would consult before a client meeting.
+    """)
+
+    # Build a merged view once
+    _drill_df = signals_df.copy()
+
+    # Attach key behavioural features from full_df if available
+    _beh_cols = ["tx_count", "tx_total", "tx_recency", "tx_max_gap",
+                 "tx_late_ratio", "tx_wknd_ratio"]
+    if full_df is not None:
+        _avail = [c for c in _beh_cols if c in full_df.columns]
+        if _avail:
+            _beh = full_df[["customer_id"] + _avail].copy()
+            _drill_df = _drill_df.merge(_beh, on="customer_id", how="left")
+
+    # Client selector
+    client_ids = _drill_df["customer_id"].astype(str).tolist()
+    selected_id = st.selectbox(
+        "Select a Client ID",
+        options=client_ids,
+        index=0,
+        help="Type to search by client ID",
+    )
+
+    row = _drill_df[_drill_df["customer_id"].astype(str) == selected_id]
+    if row.empty:
+        st.warning("Client not found.")
+    else:
+        row = row.iloc[0]
+
+        # Signal metrics
+        st.subheader(f"Signal Profile — Client {selected_id}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Buy Propensity", f"{row['buy_propensity']:.4f}")
+        c2.metric("Redemption Risk", f"{row['redemption_risk']:.4f}")
+        c3.metric("Engagement Score", f"{row['engagement_score']:.4f}")
+        c4.metric("Master Signal", f"{row['master_signal']:.4f}")
+
+        c5, c6, c7 = st.columns(3)
+        if has_ecv:
+            c5.metric("Expected Client Value",
+                      f"{row['expected_client_value']:,.0f}")
+        if has_frontier:
+            c6.metric("Opportunity Frontier Score",
+                      f"{row['opportunity_frontier_score']:.4f}")
+        c7.metric("Recommended Action", row.get("recommended_action", "—"))
+
+        # Behavioural features
+        _avail_beh = [c for c in _beh_cols if c in row.index and pd.notna(row[c])]
+        if _avail_beh:
+            st.subheader("Behavioural Features")
+            beh_cols = st.columns(min(len(_avail_beh), 4))
+            for i, feat in enumerate(_avail_beh):
+                label = feat.replace("_", " ").title()
+                val = row[feat]
+                fmt_val = f"{val:,.0f}" if val > 100 else f"{val:.3f}"
+                beh_cols[i % len(beh_cols)].metric(label, fmt_val)
+
+        # Automated interpretation
+        st.subheader("Commercial Interpretation")
+        bp = row["buy_propensity"]
+        rr = row["redemption_risk"]
+        eng = row["engagement_score"]
+
+        if bp > 0.6 and rr < 0.3:
+            st.success(
+                f"**Strong upsell opportunity.** This client shows high "
+                f"growth propensity ({bp:.2f}) with low disengagement risk "
+                f"({rr:.2f}). Engagement is {'strong' if eng > 0.5 else 'moderate'} "
+                f"({eng:.2f}). **Recommendation:** propose premium products, "
+                f"increase wallet share, and schedule a proactive review meeting."
+            )
+        elif rr > 0.6:
+            st.error(
+                f"**Retention priority.** This client has elevated "
+                f"disengagement risk ({rr:.2f}). Buy propensity is "
+                f"{'still positive' if bp > 0.4 else 'low'} ({bp:.2f}) and "
+                f"engagement is {'weakening' if eng < 0.3 else 'moderate'} "
+                f"({eng:.2f}). **Recommendation:** proactive outreach, "
+                f"loyalty incentives, and a service-quality review."
+            )
+        elif bp > 0.4 and rr < 0.5:
+            st.info(
+                f"**Emerging opportunity.** Growth propensity is moderate "
+                f"({bp:.2f}) with acceptable risk ({rr:.2f}). "
+                f"**Recommendation:** nurture the relationship with targeted "
+                f"content and periodic check-ins to move the client toward "
+                f"the upsell zone."
+            )
+        else:
+            st.warning(
+                f"**Monitor.** Signals are mixed — buy propensity {bp:.2f}, "
+                f"redemption risk {rr:.2f}, engagement {eng:.2f}. "
+                f"**Recommendation:** maintain standard service and revisit "
+                f"at the next model refresh."
+            )
+
+    st.markdown("---")
+
+    # ─── Part 3: Product Recommendation Signal ─────────────────────────
+    st.header("Part 3 — Product Opportunity Signal")
+
+    st.markdown("""
+    Distribution analytics in asset management goes beyond *which clients*
+    are promising — it also asks **which products** should be proposed
+    to each client.
+
+    The **Product Opportunity Signal** extends the system from
+    *client intelligence* to **client × product intelligence** by
+    estimating the likelihood that a client could adopt a new product
+    category based on behavioural similarity with existing adopters.
+
+    ### Conceptual Framework
+
+    This approach parallels **collaborative filtering** in recommender
+    systems:
+
+    > *Clients with similar behavioural patterns tend to adopt similar
+    > financial products.*
+
+    The signal can be estimated from four dimensions:
+
+    | Dimension | Description |
+    |-----------|------------|
+    | **Behavioural similarity** | Proximity in transaction-behaviour space (RFM, type mix, trends) |
+    | **Historical adoption** | Product categories the client already uses |
+    | **Engagement level** | Depth of relationship — engaged clients adopt more readily |
+    | **Growth propensity** | High-propensity clients are more receptive to new offerings |
+
+    In practice, a product-level opportunity score would be computed for
+    every **client × product** pair, enabling the system to rank
+    opportunities not only by client but by **client × product
+    combination**.
+
+    This aligns directly with the **Product Distribution Signals**
+    objective of the Pictet EPFL research project.
+    """)
+
+    # Generate a synthetic product opportunity signal for demonstration
+    # Uses engagement × buy_propensity with product-category noise to
+    # illustrate the concept without requiring product-level data.
+    np.random.seed(42)
+    _n = len(signals_df)
+    _product_cats = ["Equity Funds", "Fixed Income", "Multi-Asset",
+                     "Private Equity", "Structured Products"]
+
+    _base_product_score = (
+        signals_df["engagement_score"].values * 0.4
+        + signals_df["buy_propensity"].values * 0.4
+        + (1 - signals_df["redemption_risk"].values) * 0.2
+    )
+    _product_noise = np.random.normal(0, 0.08, size=_n)
+    _product_opp = np.clip(_base_product_score + _product_noise, 0, 1)
+
+    st.markdown("---")
+
+    # ─── Part 4: Distribution Intelligence Visualisation ───────────────
+    st.header("Part 4 — Distribution Intelligence Visualisation")
+
+    st.markdown("""
+    The chart below illustrates how a **client × product** distribution
+    matrix would look in practice. Each point represents a potential
+    opportunity: the x-axis is the client-level commercial opportunity
+    score and the y-axis is the simulated product adoption propensity.
+
+    The **upper-right quadrant** identifies the most promising
+    distribution opportunities — clients who are both commercially
+    attractive and likely to adopt a given product.
+    """)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    # Assign a random product category per client for illustration
+    _cat_assign = np.random.choice(_product_cats, size=_n)
+    _cat_colors = {
+        "Equity Funds": "#1976D2",
+        "Fixed Income": "#388E3C",
+        "Multi-Asset": "#FFA000",
+        "Private Equity": "#7B1FA2",
+        "Structured Products": "#D32F2F",
+    }
+
+    for cat in _product_cats:
+        mask = _cat_assign == cat
+        ax.scatter(
+            signals_df["master_signal"].values[mask],
+            _product_opp[mask],
+            s=10, alpha=0.35, label=cat,
+            color=_cat_colors[cat],
+        )
+
+    ax.set_xlabel("Client Opportunity Score (Master Signal)")
+    ax.set_ylabel("Product Adoption Propensity (simulated)")
+    ax.set_title(
+        "Client × Product Distribution Intelligence\n"
+        "Upper-right = highest-priority distribution opportunities",
+        fontweight="bold",
+    )
+    ax.axhline(0.5, color="#9e9e9e", ls="--", lw=0.7)
+    ax.axvline(
+        signals_df["master_signal"].median(),
+        color="#9e9e9e", ls="--", lw=0.7,
+    )
+    ax.legend(fontsize=8, title="Product Category", title_fontsize=9)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    st.caption(
+        "Note: Product adoption propensity is simulated for demonstration "
+        "purposes. In a production system this would be derived from "
+        "actual product-level holdings and flow data."
+    )
+
+    st.markdown("---")
+
+    # ─── Part 5: Limitations ───────────────────────────────────────────
+    st.header("Part 5 — Limitations")
+
+    st.markdown("""
+    Transparent acknowledgement of limitations is essential for any
+    research prototype presented to institutional stakeholders.
+
+    | Limitation | Detail |
+    |-----------|--------|
+    | **Behavioural proxy target** | The disengagement target is defined from future transactional activity, not explicit account closures or asset outflows. The model predicts *transactional disengagement*, not contractual churn. |
+    | **No product-level data** | The current dataset contains client-level transactions but not product holdings or fund-level flows. The Product Opportunity Signal above is therefore conceptual. |
+    | **ECV based on transaction volume** | Expected Client Value is monetised using transaction volume (tx_total) rather than assets under management. In a real system, AUM and fee structures would provide a more accurate proxy. |
+    | **Single-year observation** | All features are derived from 2023 data. Multi-year longitudinal data would strengthen trend signals and enable regime-change detection. |
+    | **No causal identification** | The models capture correlations, not causal effects. An intervention (e.g. retention campaign) might change client behaviour in ways the model cannot predict without experimental data. |
+    """)
+
+    st.markdown("---")
+
+    # ─── Part 6: Research Roadmap ──────────────────────────────────────
+    st.header("Part 6 — Research Roadmap")
+
+    st.markdown("""
+    The current prototype demonstrates the **architecture** of a client
+    intelligence system for asset management distribution. The roadmap
+    below outlines how this architecture evolves into a full
+    **distribution intelligence platform**.
+    """)
+
+    st.markdown("""
+    ```
+    ┌──────────────────────────────────┐
+    │  CURRENT PROTOTYPE               │
+    │  Client Intelligence             │
+    │  (AlphaSignal v1)                │
+    │                                  │
+    │  • Disengagement prediction      │
+    │  • Buy propensity estimation     │
+    │  • Client-level scoring          │
+    │  • Risk-adjusted opportunity     │
+    └──────────────┬───────────────────┘
+                   │
+                   ▼
+    ┌──────────────────────────────────┐
+    │  PHASE 2                         │
+    │  Client × Product Intelligence   │
+    │                                  │
+    │  • Product-level flow data       │
+    │  • Collaborative filtering       │
+    │  • Client × product scoring      │
+    │  • Distribution opportunity map  │
+    └──────────────┬───────────────────┘
+                   │
+                   ▼
+    ┌──────────────────────────────────┐
+    │  PHASE 3                         │
+    │  Full Distribution Intelligence  │
+    │                                  │
+    │  • AUM-weighted ECV              │
+    │  • Macro / market signal layer   │
+    │  • Periodic model refresh        │
+    │  • CRM integration & A/B testing │
+    │  • Regime-change detection       │
+    └──────────────────────────────────┘
+    ```
+    """)
+
+    st.markdown("""
+    | Phase | Extension | Impact |
+    |-------|----------|--------|
+    | **2a** | Integrate product-level flows (subscriptions, redemptions by fund) | Enables client × product recommendation models |
+    | **2b** | Build collaborative-filtering product propensity model | Ranks opportunities by client × product pair |
+    | **3a** | Replace tx_total with AUM and fee schedules | ECV reflects true revenue potential |
+    | **3b** | Incorporate macro and market signals (rates, flows, sentiment) | Captures regime-dependent behaviour |
+    | **3c** | Periodic model refresh with drift monitoring | Maintains predictive accuracy over time |
+    | **3d** | CRM integration with automated action routing | Closes the loop from insight to execution |
+    """)
+
+    st.info(
+        "**Positioning:** the current system is a research prototype that "
+        "demonstrates how client intelligence naturally extends to "
+        "**client × product distribution intelligence** — the core "
+        "architecture for a modern asset management distribution "
+        "analytics platform. This positioning aligns directly with the "
+        "research objectives of the Pictet EPFL project."
+    )
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  ROUTER                                                               ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
@@ -1644,6 +2016,7 @@ PAGES = {
     "§9  Expected Client Value": section_ecv,
     "§10 Opportunity Frontier": section_frontier,
     "§11 Sales Intelligence": section_sales,
+    "§12 Distribution Intelligence": section_distribution_intelligence,
 }
 
 PAGES[section]()
