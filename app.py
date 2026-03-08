@@ -426,6 +426,12 @@ def section_dataset():
             fig, ax = plt.subplots(figsize=(5, 3))
             active = full_df.loc[full_df["future_disengaged"] == 0, feat].dropna()
             diseng = full_df.loc[full_df["future_disengaged"] == 1, feat].dropna()
+            # Clip at 99th percentile to avoid extreme outliers collapsing
+            # all data into a single bin (e.g. tx_total spans 9 orders of
+            # magnitude, making the histogram appear empty).
+            clip_hi = full_df[feat].quantile(0.99)
+            active = active.clip(upper=clip_hi)
+            diseng = diseng.clip(upper=clip_hi)
             ax.hist(active, bins=30, alpha=0.5, color=C["active"],
                     label="Active", density=True)
             ax.hist(diseng, bins=30, alpha=0.6, color=C["disengaged"],
