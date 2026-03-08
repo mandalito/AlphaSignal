@@ -96,7 +96,7 @@ elif st.session_state.artifact_mtime != _artifact_mtime():
 st.sidebar.markdown(
     "<h2 style='margin-bottom:0'>📈 AlphaSignal</h2>"
     "<p style='color:grey;font-size:0.85em;margin-top:0'>"
-    "Client Intelligence Report</p>",
+    "Client Intelligence &amp; Distribution Analytics Platform</p>",
     unsafe_allow_html=True,
 )
 
@@ -1919,6 +1919,104 @@ def section_distribution_intelligence():
 
     st.markdown("---")
 
+    # ─── Part 4b: Strategic Quadrant — Value vs Risk ───────────────────
+    st.header("Strategic Client Segmentation — Value vs Risk")
+
+    st.markdown("""
+    The chart below maps every client along two dimensions that drive
+    commercial resource allocation in asset management distribution:
+    **Expected Client Value** (vertical) and **Redemption Risk**
+    (horizontal), coloured by **Buy Propensity**.
+    """)
+
+    if has_ecv:
+        _ecv_plot = signals_df["expected_client_value"].clip(
+            upper=signals_df["expected_client_value"].quantile(0.99))
+
+        fig, ax = plt.subplots(figsize=(10, 7))
+        sc = ax.scatter(
+            signals_df["redemption_risk"],
+            _ecv_plot,
+            c=signals_df["buy_propensity"],
+            cmap="RdYlGn", alpha=0.40, s=10,
+        )
+        plt.colorbar(sc, ax=ax, label="Buy Propensity")
+
+        # Quadrant lines
+        _rr_mid = 0.5
+        _ecv_mid = _ecv_plot.median()
+        ax.axvline(_rr_mid, color="#9e9e9e", ls="--", lw=0.8)
+        ax.axhline(_ecv_mid, color="#9e9e9e", ls="--", lw=0.8)
+
+        # Quadrant labels
+        _y_top = _ecv_plot.quantile(0.92)
+        _y_bot = _ecv_plot.quantile(0.08)
+        ax.text(0.25, _y_top, "STRATEGIC UPSELL\nHigh Value / Low Risk",
+                fontsize=9, fontweight="bold", color="#388E3C",
+                ha="center", alpha=0.75)
+        ax.text(0.75, _y_top, "RETENTION PRIORITY\nHigh Value / High Risk",
+                fontsize=9, fontweight="bold", color="#D32F2F",
+                ha="center", alpha=0.75)
+        ax.text(0.25, _y_bot, "STABLE / LOW PRIORITY\nLow Value / Low Risk",
+                fontsize=9, fontweight="bold", color="#757575",
+                ha="center", alpha=0.65)
+        ax.text(0.75, _y_bot, "MONITOR\nLow Value / High Risk",
+                fontsize=9, fontweight="bold", color="#9E9E9E",
+                ha="center", alpha=0.65)
+
+        ax.set_xlabel("Redemption Risk")
+        ax.set_ylabel("Expected Client Value (clipped at 99th pctl)")
+        ax.set_title(
+            "Strategic Client Segmentation\n"
+            "Allocating commercial effort across the client base",
+            fontweight="bold",
+        )
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+        st.caption(
+            "Each point is a client. Colour intensity reflects Buy Propensity "
+            "(green = high growth likelihood). The quadrant framework helps "
+            "relationship managers prioritise effort by combining value and risk."
+        )
+    else:
+        st.info("Expected Client Value not available — chart requires ECV.")
+
+    st.markdown("---")
+
+    # ─── Distribution Insight box ──────────────────────────────────────
+    st.header("Distribution Insight")
+
+    st.markdown("""
+    <div style='background:#e0f2f1;padding:1.2em 1.5em;border-left:4px solid #00897B;
+    border-radius:6px;margin-bottom:1.5em'>
+    <strong>How AlphaSignal supports distribution strategy.</strong>
+    <br><br>
+    Asset management distribution is not only about identifying valuable
+    clients — it is about <em>allocating relationship management effort
+    efficiently</em> across a large, heterogeneous client base.
+    <br><br>
+    AlphaSignal decomposes commercial opportunity into three behavioural
+    dimensions:<br>
+    &nbsp;&nbsp;• <strong>Growth potential</strong> — Buy Propensity<br>
+    &nbsp;&nbsp;• <strong>Relationship engagement</strong> — Engagement Score<br>
+    &nbsp;&nbsp;• <strong>Disengagement risk</strong> — Redemption Risk<br>
+    <br>
+    Combining these signals with <strong>Expected Client Value</strong>
+    (monetised opportunity) and the <strong>Opportunity Frontier Score</strong>
+    (risk-adjusted ranking) produces a quantitative, risk-aware
+    commercial prioritisation of every client.
+    <br><br>
+    This architecture mirrors the expected-value and risk-adjustment
+    frameworks used by institutional distribution teams to optimise
+    coverage models, allocate RM bandwidth, and maximise commercial
+    outcomes per unit of relationship effort.
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
     # ─── Part 5: Limitations ───────────────────────────────────────────
     st.header("Part 5 — Limitations")
 
@@ -1996,13 +2094,73 @@ def section_distribution_intelligence():
     | **3d** | CRM integration with automated action routing | Closes the loop from insight to execution |
     """)
 
+    # ─── Final System Architecture ──────────────────────────────────────
+    st.header("AlphaSignal — System Architecture")
+
+    st.markdown("""
+    The diagram below summarises the complete analytical pipeline — from
+    raw data to commercial decision support.
+    """)
+
+    st.markdown("""
+    ```
+    ┌───────────────────────────────────────────────────────────────────┐
+    │                        RAW DATA                                  │
+    │        48,723 customers  ·  3.2 M transactions  ·  2023          │
+    └──────────────────────────┬────────────────────────────────────────┘
+                               │
+                               ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │              BEHAVIOURAL FEATURE ENGINEERING                      │
+    │     RFM aggregates · trends · type shares · weekend ratio        │
+    │     Jan – Sep 2023 (strict temporal barrier)                     │
+    └──────────────────────────┬────────────────────────────────────────┘
+                               │
+                               ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │                     SIGNAL LAYER                                  │
+    │                                                                   │
+    │   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+    │   │ Redemption Risk  │  │ Buy Propensity   │  │   Engagement    │  │
+    │   │ P(disengage)     │  │ P(tx growth)     │  │   Score         │  │
+    │   └────────┬────────┘  └────────┬────────┘  └────────┬────────┘  │
+    │            │                    │                     │           │
+    │            └────────────────────┼─────────────────────┘           │
+    │                                │                                  │
+    │                                ▼                                  │
+    │              MASTER COMMERCIAL SIGNAL                             │
+    │         BP × (1 − RR) × Engagement                               │
+    └──────────────────────────┬────────────────────────────────────────┘
+                               │
+                               ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │              COMMERCIAL SCORING                                   │
+    │                                                                   │
+    │   Expected Client Value          Opportunity Frontier Score       │
+    │   Master × tx_total              ECV / RedemptionRisk             │
+    │   (monetised opportunity)        (risk-adjusted ranking)          │
+    └──────────────────────────┬────────────────────────────────────────┘
+                               │
+                               ▼
+    ┌───────────────────────────────────────────────────────────────────┐
+    │         SALES & DISTRIBUTION INTELLIGENCE                        │
+    │                                                                   │
+    │   Client rankings · Recommended actions · Client drilldown       │
+    │   Strategic segmentation · Product opportunity signal             │
+    └───────────────────────────────────────────────────────────────────┘
+    ```
+    """)
+
     st.info(
-        "**Positioning:** the current system is a research prototype that "
-        "demonstrates how client intelligence naturally extends to "
-        "**client × product distribution intelligence** — the core "
-        "architecture for a modern asset management distribution "
-        "analytics platform. This positioning aligns directly with the "
-        "research objectives of the Pictet EPFL project."
+        "**Positioning:** AlphaSignal is a research prototype that "
+        "demonstrates the complete architecture of a **client intelligence "
+        "and distribution analytics platform** for asset management. "
+        "It combines predictive modelling, probability calibration, "
+        "signal architecture, expected-value scoring, risk-adjusted "
+        "opportunity ranking, and commercial interpretation — and shows "
+        "how client intelligence naturally extends to **client × product "
+        "distribution intelligence**. This positioning aligns directly "
+        "with the research objectives of the Pictet EPFL project."
     )
 
 
